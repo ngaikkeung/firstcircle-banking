@@ -73,6 +73,20 @@ mvn -q exec:java -Dexec.mainClass=com.firstcircle.banking.demo.Demo
 
 ---
 
+## Documentation
+
+Deeper design write-ups with Mermaid diagrams live under [`doc/`](doc/) — see
+[`doc/README.md`](doc/README.md) for the full index:
+
+- [System overview](doc/system-overview.md) — architecture, layering, ports & adapters
+- [Entity / data model](doc/entities.md) — domain objects, fields, relationships, invariants
+- [Operation flows](doc/operation-flows.md) — sequence diagrams for each operation + concurrency/idempotency
+- [Ledger design](doc/ledger.md) — double-entry model, per-currency balancing, contra accounts
+- [Money movement](doc/money-movement.md) — conservation, FX rounding residue
+- [AI usage](doc/ai-usage.md) — how Claude Code was used across the development cycle
+
+---
+
 ## What it does
 
 | Operation | Behaviour |
@@ -173,17 +187,6 @@ src/test/java/com/firstcircle/banking/
   concurrency/               # ConcurrencyStressTest (overdraft race, lost-update, conservation, ping-pong)
   BankingService*Test.java   # per-operation behaviour + edge cases
 ```
-
-## Documentation
-
-Deeper design write-ups with Mermaid diagrams live under [`doc/`](doc/) — see
-[`doc/README.md`](doc/README.md) for the full index:
-
-- [System overview](doc/system-overview.md) — architecture, layering, ports & adapters
-- [Entity / data model](doc/entities.md) — domain objects, fields, relationships, invariants
-- [Operation flows](doc/operation-flows.md) — sequence diagrams for each operation + concurrency/idempotency
-- [Ledger design](doc/ledger.md) — double-entry model, per-currency balancing, contra accounts
-- [Money movement](doc/money-movement.md) — conservation, FX rounding residue
 
 ## Dependencies
 
