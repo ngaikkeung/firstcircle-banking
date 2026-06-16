@@ -1,23 +1,42 @@
-# First Circle — Banking Service
+# Banking Service
 
-A thread-safe, multi-currency banking **component** (a software module — no HTTP/API layer) that
-simulates basic banking: account creation, deposit, withdrawal (no overdraft), transfer, and
-balance enquiry. Money is modelled exactly, every movement is recorded in a balanced
-double-entry ledger, and operations are safe under concurrent access.
+A **banking demo** in **Java 17** (no HTTP/API layer) implementing account management,
+deposits, no-overdraft withdrawals, multi-currency transfers, and balance enquiries. It enforces
+exact monetary representation and a per-currency balanced double-entry ledger, with all operations
+safe under concurrent access.
 
-This is a take-home engineering exercise for [First Circle](https://firstcircle.com), a credit-led
-SME neobank in the Philippines.
+**Highlights**
+
+- **Exact money** — signed `long` minor units; `BigDecimal` used only at the FX boundary
+- **Balanced by construction** — every ledger transaction nets to zero, per currency
+- **Deadlock-free concurrency** — ordered, per-account locking
+- **Ports & adapters** — in-memory today, persistence-ready with no domain changes
+- **At-most-once mutations** — idempotency keys make retries safe
+- **Well-tested** — JUnit 5 + AssertJ, including concurrency stress tests
+
+---
+
+## User stories
+
+- **As a prospective account holder**, I want to open an account — optionally funded with an
+  opening deposit — so that I can start using banking services.
+- **As an account holder**, I want to deposit money so that my balance grows by exactly the
+  amount I deposited.
+- **As an account holder**, I want to withdraw money, and never be allowed to overdraw, so that I
+  can access my funds without going into debt.
+- **As an account holder**, I want to transfer money to another account in my own currency or a
+  different one so that I can pay others reliably.
+- **As an account holder**, I want to check my balance at any time so that I always know how much
+  money I have.
+- **As an integrating application**, I want every operation to be safe under concurrent access and
+  replayable under the same idempotency key without side effects, so that retries and parallel
+  traffic can never corrupt balances or create duplicate transactions.
+- **As an auditor**, I want every money movement recorded in a balanced double-entry ledger so
+  that funds are always traceable and fully accounted for.
 
 ---
 
 ## Requirement & coverage
-
-> **Senior Engineer Test — Engineering Code Test (verbatim intent):** Develop a service that
-> simulates basic banking operations. It will manage accounts and process deposits, withdrawals,
-> and transfers between accounts. It should reflect the real-world constraints of a bank and
-> adhere to engineering best practices. In-memory data storage suffices (a database may be added
-> at discretion). "Service" here means a software component/module, not a deployable unit with an
-> API.
 
 | # | Requirement | Fulfilled? | How |
 |---|---|---|---|
@@ -155,6 +174,17 @@ src/test/java/com/firstcircle/banking/
   BankingService*Test.java   # per-operation behaviour + edge cases
 ```
 
+## Documentation
+
+Deeper design write-ups with Mermaid diagrams live under [`doc/`](doc/) — see
+[`doc/README.md`](doc/README.md) for the full index:
+
+- [System overview](doc/system-overview.md) — architecture, layering, ports & adapters
+- [Entity / data model](doc/entities.md) — domain objects, fields, relationships, invariants
+- [Operation flows](doc/operation-flows.md) — sequence diagrams for each operation + concurrency/idempotency
+- [Ledger design](doc/ledger.md) — double-entry model, per-currency balancing, contra accounts
+- [Money movement](doc/money-movement.md) — conservation, FX rounding residue
+
 ## Dependencies
 
 Production code depends only on the JDK plus **Lombok** (compile-time only, `provided` scope),
@@ -187,5 +217,5 @@ kept explicit. Tests use JUnit 5 and AssertJ.
 - A real persistence adapter (JDBC/JPA with `SELECT ... FOR UPDATE` mirroring the lock order).
 - A durable, shared idempotency store (Redis / DB).
 - Authentication & authorisation, interest, fees, holds, event publishing.
-- `long` minor units comfortably cover realistic SME balances; if sub-centavo precision or
+- `long` minor units comfortably cover realistic balances; if sub-unit precision or
   extremely large values were ever needed, a `BigDecimal`-backed `Money` is a drop-in alternative.
