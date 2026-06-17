@@ -18,7 +18,7 @@ relational database (H2), and supports idempotent operations.
 
 The component follows a ports-and-adapters (hexagonal) shape. The **domain** is pure and knows
 nothing about storage or FX feeds. **Ports** are interfaces; **adapters** are the JDBC (and FX)
-implementations. `BankingService` is the only orchestration point and the only place that opens
+implementations. `BankingService` (the interface) is the public contract; `DefaultBankingService` is the concrete implementation and the only place that opens
 transactions and takes row locks.
 
 ```mermaid
@@ -28,7 +28,8 @@ flowchart TB
     end
 
     subgraph Core["banking component"]
-        BS["BankingService<br/><i>façade · orchestration · transactions · ledger · idempotency</i>"]
+        BS["BankingService «interface»<br/><i>public contract</i>"]
+        DBS["DefaultBankingService<br/><i>façade · orchestration · transactions · ledger · idempotency</i>"]
 
         subgraph Ports["ports (interfaces)"]
             AR["AccountRepository"]
@@ -52,12 +53,13 @@ flowchart TB
     end
 
     C -->|"create / deposit /<br/>withdraw / transfer / balance"| BS
-    BS --> AC
-    BS --> TX
-    BS -.->|runs each op in a tx| TM
-    BS -.->|uses| AR
-    BS -.->|uses| LR
-    BS -.->|uses| FX
+    BS -.->|implemented by| DBS
+    DBS --> AC
+    DBS --> TX
+    DBS -.->|runs each op in a tx| TM
+    DBS -.->|uses| AR
+    DBS -.->|uses| LR
+    DBS -.->|uses| FX
 
     AR -.->|implemented by| JAR
     LR -.->|implemented by| JLR
@@ -71,7 +73,8 @@ flowchart TB
 
 | Component | Package | Responsibility |
 |---|---|---|
-| `BankingService` | `banking` | Public façade. Validates input, opens a transaction, locks rows, mutates accounts, posts ledger transactions, applies FX, and guards idempotency. The **only** transaction/lock owner. |
+| `BankingService` (interface) | `banking` | Public contract. Defines the 10 banking operations consumers depend on. |
+| `DefaultBankingService` | `banking` | Implementation. Validates input, opens a transaction, locks rows, mutates accounts, posts ledger transactions, applies FX, and guards idempotency. The **only** transaction/lock owner. |
 | `TransactionManager` | `banking.db` | Runs a unit of work in one DB transaction: `autoCommit=false`, commit on success, rollback on any failure. |
 | `Money`, `Account`, `Transaction`, `LedgerEntry`, ids | `banking.domain` | Immutable value objects and the double-entry ledger records. `Transaction.create` enforces the per-currency balance invariant. |
 | `AccountRepository` / `LedgerRepository` | `banking.repo` | Storage ports + JDBC adapters. Methods take the caller's `Connection`; `findForUpdate` issues `SELECT … FOR UPDATE`. `insert`/`append` carry an optional idempotency `request_key` (a `UNIQUE` column) and `findByRequestKey` loads a prior result. **No** multi-key atomicity of their own (that is the transaction's job). |

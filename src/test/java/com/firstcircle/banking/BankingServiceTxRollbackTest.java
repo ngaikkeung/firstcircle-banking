@@ -9,8 +9,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Proves that a failed mutation rolls back atomically: neither the balance change nor the ledger
- * posting is left behind. This is the guarantee the DB transaction provides (previously only
- * approximated — see the old {@code BankingService} comment about the ledger/balance write gap).
+ * posting is left behind. This is the guarantee the DB transaction provides.
  */
 class BankingServiceTxRollbackTest {
 

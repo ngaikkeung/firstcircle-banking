@@ -179,7 +179,8 @@ not provided — a duplicate simply returns the original.
 
 ```
 src/main/java/com/firstcircle/banking/
-  BankingService.java        # public façade: orchestrates transactions, FX, ledger, idempotency
+  BankingService.java        # public interface (contract)
+  DefaultBankingService.java # implementation: orchestrates transactions, FX, ledger, idempotency
   domain/                    # Money, Account (immutable), AccountId, Transaction, LedgerEntry, factories
   exceptions/                # BankingException + 6 specific subclasses
   fx/                        # ExchangeRateProvider port + in-memory adapter

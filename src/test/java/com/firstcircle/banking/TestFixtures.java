@@ -51,7 +51,7 @@ public final class TestFixtures {
         DatabaseInitializer.init(dataSource);
         TransactionManager tm = new TransactionManager(dataSource);
         JdbcLedgerRepository ledger = new JdbcLedgerRepository();
-        BankingService service = new BankingService(
+        BankingService service = new DefaultBankingService(
                 new JdbcAccountRepository(),
                 ledger,
                 defaultFx(),

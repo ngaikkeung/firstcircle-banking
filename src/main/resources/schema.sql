@@ -29,8 +29,3 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_account ON ledger_entries(account_id);
-
--- Idempotency: each mutating operation may carry a client request key, stored as a UNIQUE column
--- on the entity it produced (accounts.request_key for createAccount, transactions.request_key for
--- deposit/withdraw/transfer). A duplicate key is rejected by the constraint; non-keyed ops store
--- NULL (NULLs are distinct in UNIQUE, so they never collide).

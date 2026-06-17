@@ -116,7 +116,7 @@ lock before debiting).
 | Field | Type | Notes |
 |---|---|---|
 | `id` | `TransactionId` | UUID. |
-| `sequence` | `long` | Monotonic, assigned by `BankingService`. |
+| `sequence` | `long` | Monotonic, assigned by `DefaultBankingService`. |
 | `timestamp` | `Instant` | From an injected `Clock` (deterministic in tests). |
 | `type` | `TransactionType` | `CREATE` / `DEPOSIT` / `WITHDRAWAL` / `TRANSFER`. |
 | `entries` | `List<LedgerEntry>` | Defensive copy; **must net to zero per currency** (validated in `create`). |
