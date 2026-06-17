@@ -11,7 +11,7 @@ safe under concurrent access.
 - **Balanced by construction** — every ledger transaction nets to zero, per currency
 - **Deadlock-free concurrency** — DB transactions + `SELECT … FOR UPDATE` in canonical account order
 - **H2-backed storage** — in-memory relational DB; ACID transactions and a SQL-queryable ledger
-- **At-most-once mutations** — idempotency keys claimed inside the transaction (DB-enforced)
+- **At-most-once mutations** — idempotency key stored as a `UNIQUE` column on the entity (DB-enforced)
 - **Well-tested** — JUnit 5 + AssertJ, including concurrency stress tests
 
 ---
@@ -150,12 +150,12 @@ service-level concern.
 
 ### Idempotency (`idempotency/`)
 
-Mutating operations can be made at-most-once with an `IdempotencyKey`. The key is claimed inside
-the same database transaction as the balance change (a `UNIQUE` constraint on the request key):
-the first request claims the key and stores its result, and concurrent/replayed duplicates with the
-same key return that stored result without re-executing. Reusing a key with *different* parameters
-throws `IdempotencyConflictException` to catch misuse. Because the claim lives in the transaction,
-a rolled-back operation frees its key and a crash can't leave a half-claimed result.
+Mutating operations can be made at-most-once with an `IdempotencyKey`. The request key is stored as
+a `UNIQUE` column on the entity the operation produced (`accounts.request_key` for `createAccount`,
+`transactions.request_key` for deposit/withdraw/transfer). A duplicate key returns the original
+result without re-executing; on a concurrent same-key race the loser's transaction rolls back and it
+re-reads the winner. Conflict detection for a key reused with *different* parameters is intentionally
+not provided — a duplicate simply returns the original.
 
 ---
 
@@ -181,15 +181,15 @@ a rolled-back operation frees its key and a crash can't leave a half-claimed res
 src/main/java/com/firstcircle/banking/
   BankingService.java        # public façade: orchestrates transactions, FX, ledger, idempotency
   domain/                    # Money, Account (immutable), AccountId, Transaction, LedgerEntry, factories
-  exceptions/                # BankingException + 7 specific subclasses
+  exceptions/                # BankingException + 6 specific subclasses
   fx/                        # ExchangeRateProvider port + in-memory adapter
-  idempotency/               # IdempotencyKey, IdempotencyRepository port + JDBC adapter
+  idempotency/               # IdempotencyKey (the client-supplied dedup token)
   ledger/                    # ContraAccountIds (system bookkeeping accounts)
   repo/                      # Account/Ledger repository ports + JDBC adapters
   db/                        # TransactionManager, DatabaseInitializer, H2DataSources (H2 in-memory)
   demo/                      # Demo.main() end-to-end example
 src/main/resources/
-  schema.sql                 # accounts, transactions, ledger_entries, idempotency
+  schema.sql                 # accounts, transactions, ledger_entries (request_key on accounts + transactions)
 src/test/java/com/firstcircle/banking/
   domain/                    # MoneyTest, TransactionBalanceTest
   fx/                        # FxConversionTest
@@ -216,7 +216,7 @@ logic and currency-aware formatting are kept explicit. Tests use JUnit 5 and Ass
   error path (currency mismatch, unknown account, insufficient funds, negative/zero, self-transfer,
   cross-currency FX with residue, missing rate). Each asserts the posted ledger is balanced.
 - **Idempotency tests**: replay returns the identical transaction; two concurrent same-key calls
-  execute once; same key + different params conflicts.
+  execute once; same key + different params returns the original (no conflict).
 - **Concurrency stress tests** (`ExecutorService` + `CountDownLatch`, `@Timeout`): an overdraft
   race (exactly N succeed, balance hits zero), a lost-update deposit check (balance == start + Σ),
   closed-system money conservation across many transfers, and a ping-pong pair that must complete

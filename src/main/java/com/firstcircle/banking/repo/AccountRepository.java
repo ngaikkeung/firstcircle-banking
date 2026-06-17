@@ -15,7 +15,9 @@ import java.util.Optional;
  * {@code BankingService}); the repository itself owns no locking.
  *
  * <p>{@link #findForUpdate(AccountId, Connection)} locks the account's row for the duration of the
- * transaction; {@link #findById(AccountId, Connection)} is a non-locking read.
+ * transaction; {@link #findById(AccountId, Connection)} is a non-locking read. {@code requestKey}
+ * (nullable) is stored on the row and made {@code UNIQUE} by the schema, so idempotent
+ * {@code createAccount} calls are deduped by the constraint.
  */
 public interface AccountRepository {
 
@@ -25,8 +27,14 @@ public interface AccountRepository {
     /** Non-locking read. */
     Optional<Account> findById(AccountId id, Connection connection);
 
-    /** Insert a newly-created account. */
-    void insert(Account account, Connection connection);
+    /**
+     * Insert a newly-created account. {@code requestKey} is the idempotency key (or {@code null});
+     * the schema's {@code UNIQUE} constraint on it rejects a concurrent duplicate create.
+     */
+    void insert(Account account, String requestKey, Connection connection);
+
+    /** Load the account previously created under an idempotency {@code requestKey}, if any. */
+    Optional<Account> findByRequestKey(String requestKey, Connection connection);
 
     /** Update an existing account's mutable fields (balance). Id and currency are immutable. */
     void update(Account account, Connection connection);

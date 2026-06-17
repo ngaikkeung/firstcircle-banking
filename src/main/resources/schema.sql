@@ -5,14 +5,16 @@ CREATE TABLE IF NOT EXISTS accounts (
   owner_name    VARCHAR(255) NOT NULL,
   currency      CHAR(3)       NOT NULL,
   balance_minor BIGINT        NOT NULL,
+  request_key   VARCHAR(128)  UNIQUE,
   CONSTRAINT chk_nonneg CHECK (balance_minor >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-  id         UUID PRIMARY KEY,
-  seq        BIGINT NOT NULL UNIQUE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  type       VARCHAR(16) NOT NULL
+  id           UUID PRIMARY KEY,
+  seq          BIGINT NOT NULL UNIQUE,
+  created_at   TIMESTAMP WITH TIME ZONE NOT NULL,
+  type         VARCHAR(16) NOT NULL,
+  request_key  VARCHAR(128) UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
@@ -28,12 +30,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
 
 CREATE INDEX IF NOT EXISTS idx_entries_account ON ledger_entries(account_id);
 
--- Idempotency: the request_key PRIMARY KEY is the at-most-once gate, claimed inside the
--- operation's transaction. Non-keyed operations insert no row here.
-CREATE TABLE IF NOT EXISTS idempotency (
-  request_key  VARCHAR(128) PRIMARY KEY,
-  fingerprint  VARCHAR(256) NOT NULL,
-  result_kind  VARCHAR(16)  NOT NULL,
-  result_ref   UUID NOT NULL,
-  created_at   TIMESTAMP WITH TIME ZONE NOT NULL
-);
+-- Idempotency: each mutating operation may carry a client request key, stored as a UNIQUE column
+-- on the entity it produced (accounts.request_key for createAccount, transactions.request_key for
+-- deposit/withdraw/transfer). A duplicate key is rejected by the constraint; non-keyed ops store
+-- NULL (NULLs are distinct in UNIQUE, so they never collide).

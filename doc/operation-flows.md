@@ -12,7 +12,6 @@ sequenceDiagram
     participant C as Caller
     participant S as BankingService
     participant TM as TransactionManager
-    participant IR as IdempotencyRepository
     participant R as AccountRepository
     participant G as LedgerRepository
 
@@ -20,12 +19,11 @@ sequenceDiagram
     S->>TM: run(tx body)
     TM->>TM: BEGIN (autoCommit=false)
     opt key provided
-        S->>IR: findByKey(key)
-        alt key exists, fingerprint matches
-            S-->>C: return stored transaction (replay)
+        S->>G: findByRequestKey(key)
+        alt key exists
+            S-->>C: return original transaction (replay)
         else key absent
-            S->>IR: claim(key, fingerprint, txRef)
-            Note over IR: UNIQUE request_key = at-most-once gate
+            Note over S,G: append will carry request_key (UNIQUE) — the at-most-once gate
         end
     end
     S->>S: requirePositiveAmount(amount)
@@ -34,7 +32,7 @@ sequenceDiagram
     S->>S: requireSameCurrency(amount, account)
     S->>S: account = account.credit(amount.minor)
     S->>R: update(account)
-    S->>G: append(Transaction:<br/>credit account / debit CASH_CONTRA)
+    S->>G: append(Transaction:<br/>credit account / debit CASH_CONTRA, request_key)
     TM->>TM: COMMIT
     S-->>C: Transaction
 ```
@@ -184,25 +182,25 @@ the wait always resolves.
 
 ## Idempotency: at-most-once execution
 
-Mutating operations accept an optional `IdempotencyKey`. The key is claimed **inside the
-transaction** (a `UNIQUE` constraint on `request_key`): the first caller to commit wins and stores
-its result reference; concurrent or replayed duplicates load and return that result. Reusing a key
-with **different** parameters is rejected as a conflict.
+Mutating operations accept an optional `IdempotencyKey`. The key is stored as a `UNIQUE` column on
+the entity the operation produced (`accounts.request_key` for createAccount, `transactions.request_key`
+otherwise). The service checks by key first and **returns the original result** on a hit (a retry
+never re-executes); on a concurrent same-key race the loser's whole transaction rolls back and it
+re-reads the winner. Conflict detection for a key reused with **different** parameters is not
+provided — a duplicate simply returns the original.
 
 ```mermaid
 flowchart TD
-    Start([op with key, in tx]) --> Find["idem.findByKey(key)"]
-    Find --> Exists?{"key exists?"}
-    Exists? -->|"yes"| Fp{"fingerprint<br/>matches?"}
-    Fp -->|"no"| Conflict(["throw IdempotencyConflictException → rollback"])
-    Fp -->|"yes"| Load["load stored result by ref"]
-    Load --> Replay([return stored result])
-    Exists? -->|"no"| Claim["idem.claim(key)"]
-    Claim --> Race?{"UNIQUE<br/>violated?"}
-    Race? -->|"yes (lost race)"| Find2["findByKey → load winner"] --> Replay
-    Race? -->|"no"| Work["execute operation"] --> Commit([commit tx, store result ref])
+    Start([op with key]) --> Try["tm.run: findByRequestKey(key)"]
+    Try --> Exists?{"key exists?"}
+    Exists? -->|"yes"| Replay([return original result])
+    Exists? -->|"no"| Work["execute operation, insert/append with request_key"]
+    Work --> Race?{"UNIQUE violated<br/>on commit?"}
+    Race? -->|"no"| Done([commit, return result])
+    Race? -->|"yes (lost race)"| Roll["tx rolled back"] --> Read["fresh tx: findByRequestKey → winner"]
+    Read --> Replay
 ```
 
-Claiming before doing the work means a request that loses the race has written nothing; claiming
-inside the transaction means a rolled-back (failed) operation frees its key. Operations called
-without a key bypass idempotency entirely and always execute.
+Because the losing transaction is rolled back before the re-read, a balance is never applied twice.
+Operations called without a key insert `NULL` (NULLs are distinct in UNIQUE, so they never collide)
+and always execute.

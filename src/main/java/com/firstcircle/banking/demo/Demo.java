@@ -9,7 +9,6 @@ import com.firstcircle.banking.domain.Money;
 import com.firstcircle.banking.domain.Transaction;
 import com.firstcircle.banking.fx.InMemoryExchangeRateProvider;
 import com.firstcircle.banking.idempotency.IdempotencyKey;
-import com.firstcircle.banking.idempotency.JdbcIdempotencyRepository;
 import com.firstcircle.banking.repo.JdbcAccountRepository;
 import com.firstcircle.banking.repo.JdbcLedgerRepository;
 import java.time.Clock;
@@ -40,7 +39,6 @@ public final class Demo {
                 new JdbcLedgerRepository(),
                 fx,
                 tm,
-                new JdbcIdempotencyRepository(),
                 Clock.systemUTC());
 
         Currency hkd = Currency.getInstance("HKD");

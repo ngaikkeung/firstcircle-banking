@@ -11,16 +11,19 @@ import java.util.Optional;
 /**
  * Port for the append-only ledger.
  *
- * <p>{@link #append(Transaction, Connection)} inserts the transaction and all its entries within the
- * caller's transaction, so a ledger posting is never observable half-written. The read methods also
- * take the caller's {@link Connection} so an in-flight operation can load a previously-stored
- * transaction (e.g. an idempotent replay).
+ * <p>{@link #append(Transaction, String, Connection)} inserts the transaction and all its entries
+ * within the caller's transaction, so a posting is never observable half-written. {@code requestKey}
+ * (nullable) is stored on the transaction row and made {@code UNIQUE} by the schema — that is the
+ * idempotency gate for deposit/withdraw/transfer. The read methods also take the caller's connection.
  */
 public interface LedgerRepository {
 
-    void append(Transaction transaction, Connection connection);
+    void append(Transaction transaction, String requestKey, Connection connection);
 
     Optional<Transaction> findById(TransactionId id, Connection connection);
+
+    /** Load the transaction previously posted under an idempotency {@code requestKey}, if any. */
+    Optional<Transaction> findByRequestKey(String requestKey, Connection connection);
 
     List<Transaction> findAll(Connection connection);
 

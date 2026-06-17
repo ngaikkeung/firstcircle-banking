@@ -34,7 +34,6 @@ flowchart TB
             AR["AccountRepository"]
             LR["LedgerRepository"]
             FX["ExchangeRateProvider"]
-            IR["IdempotencyRepository"]
         end
 
         subgraph Domain["domain (pure)"]
@@ -49,8 +48,7 @@ flowchart TB
         JAR["JdbcAccountRepository"]
         JLR["JdbcLedgerRepository"]
         IFX["InMemoryExchangeRateProvider"]
-        JIR["JdbcIdempotencyRepository"]
-        H2[("H2 in-memory DB")]
+        H2[("H2 in-memory DB<br/>accounts/transactions carry a UNIQUE request_key")]
     end
 
     C -->|"create / deposit /<br/>withdraw / transfer / balance"| BS
@@ -60,15 +58,12 @@ flowchart TB
     BS -.->|uses| AR
     BS -.->|uses| LR
     BS -.->|uses| FX
-    BS -.->|uses| IR
 
     AR -.->|implemented by| JAR
     LR -.->|implemented by| JLR
     FX -.->|implemented by| IFX
-    IR -.->|implemented by| JIR
     JAR --> H2
     JLR --> H2
-    JIR --> H2
     TM --> H2
 ```
 
@@ -79,8 +74,8 @@ flowchart TB
 | `BankingService` | `banking` | Public façade. Validates input, opens a transaction, locks rows, mutates accounts, posts ledger transactions, applies FX, and guards idempotency. The **only** transaction/lock owner. |
 | `TransactionManager` | `banking.db` | Runs a unit of work in one DB transaction: `autoCommit=false`, commit on success, rollback on any failure. |
 | `Money`, `Account`, `Transaction`, `LedgerEntry`, ids | `banking.domain` | Immutable value objects and the double-entry ledger records. `Transaction.create` enforces the per-currency balance invariant. |
-| `AccountRepository` / `LedgerRepository` | `banking.repo` | Storage ports + JDBC adapters. Methods take the caller's `Connection`; `findForUpdate` issues `SELECT … FOR UPDATE`. **No** multi-key atomicity of their own (that is the transaction's job). |
-| `IdempotencyRepository` | `banking.idempotency` | At-most-once port + JDBC adapter: claim a `UNIQUE` request key inside the transaction, load on replay. |
+| `AccountRepository` / `LedgerRepository` | `banking.repo` | Storage ports + JDBC adapters. Methods take the caller's `Connection`; `findForUpdate` issues `SELECT … FOR UPDATE`. `insert`/`append` carry an optional idempotency `request_key` (a `UNIQUE` column) and `findByRequestKey` loads a prior result. **No** multi-key atomicity of their own (that is the transaction's job). |
+| `IdempotencyKey` | `banking.idempotency` | The client-supplied token (optional) that makes a mutating request at-most-once. |
 | `ExchangeRateProvider` | `banking.fx` | FX rate port + in-memory adapter. Throws if a rate is missing. |
 | `DatabaseInitializer` / `H2DataSources` | `banking.db` | Builds the H2 in-memory `DataSource` and applies `schema.sql`. |
 | `ContraAccountIds` | `banking.ledger` | Well-known system contra accounts (`CASH_CONTRA`, `FX_CONTRA`) used to balance postings. |
@@ -112,7 +107,6 @@ classDiagram
     class NegativeAmountException
     class SameAccountTransferException
     class FxRateUnavailableException
-    class IdempotencyConflictException
 
     BankingException <|-- AccountNotFoundException
     BankingException <|-- InsufficientFundsException
@@ -120,5 +114,4 @@ classDiagram
     BankingException <|-- NegativeAmountException
     BankingException <|-- SameAccountTransferException
     BankingException <|-- FxRateUnavailableException
-    BankingException <|-- IdempotencyConflictException
 ```

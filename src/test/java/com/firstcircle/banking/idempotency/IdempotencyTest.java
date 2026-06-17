@@ -1,14 +1,12 @@
 package com.firstcircle.banking.idempotency;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.firstcircle.banking.BankingService;
 import com.firstcircle.banking.TestFixtures;
 import com.firstcircle.banking.domain.Account;
 import com.firstcircle.banking.domain.Money;
 import com.firstcircle.banking.domain.Transaction;
-import com.firstcircle.banking.exceptions.IdempotencyConflictException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -25,12 +23,10 @@ import org.junit.jupiter.api.Timeout;
 class IdempotencyTest {
 
     private BankingService bank;
-    private TestFixtures.ServiceWiring wiring;
 
     @BeforeEach
     void setUp() {
-        wiring = TestFixtures.newServiceWithWiring();
-        bank = wiring.service();
+        bank = TestFixtures.newService();
     }
 
     @Test
@@ -54,11 +50,17 @@ class IdempotencyTest {
     }
 
     @Test
-    void sameKeyWithDifferentParametersConflicts() {
+    void sameKeyWithDifferentParametersReturnsOriginal() {
+        // Conflict detection is intentionally not provided: a reused key simply returns the original
+        // result, regardless of the parameters in the second call.
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
-        bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), IdempotencyKey.of("k"));
-        assertThatThrownBy(() -> bank.deposit(a.id(), Money.ofMinor(99_00, TestFixtures.HKD), IdempotencyKey.of("k")))
-                .isInstanceOf(IdempotencyConflictException.class);
+        IdempotencyKey key = IdempotencyKey.of("k");
+
+        Transaction first = bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), key);
+        Transaction second = bank.deposit(a.id(), Money.ofMinor(99_00, TestFixtures.HKD), key);
+
+        assertThat(second.id()).isEqualTo(first.id());                       // returns the original
+        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(150_00, TestFixtures.HKD)); // 50 credited once
     }
 
     @Test
@@ -89,15 +91,11 @@ class IdempotencyTest {
     }
 
     @Test
-    void noKeyLeavesNoIdempotencyRow() {
+    void noKeyAlwaysExecutes() {
+        // Operations without a key are never deduped: both deposits apply.
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
         bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
         assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
-
-        // No idempotency claim was recorded because no key was supplied.
-        JdbcIdempotencyRepository idem = new JdbcIdempotencyRepository();
-        long rows = wiring.tm().run(idem::count);
-        assertThat(rows).isZero();
     }
 }

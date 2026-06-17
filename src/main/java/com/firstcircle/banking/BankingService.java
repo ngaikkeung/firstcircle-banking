@@ -12,15 +12,11 @@ import com.firstcircle.banking.domain.TransactionId;
 import com.firstcircle.banking.domain.TransactionType;
 import com.firstcircle.banking.exceptions.AccountNotFoundException;
 import com.firstcircle.banking.exceptions.CurrencyMismatchException;
-import com.firstcircle.banking.exceptions.IdempotencyConflictException;
 import com.firstcircle.banking.exceptions.InsufficientFundsException;
 import com.firstcircle.banking.exceptions.NegativeAmountException;
 import com.firstcircle.banking.exceptions.SameAccountTransferException;
 import com.firstcircle.banking.fx.ExchangeRateProvider;
 import com.firstcircle.banking.idempotency.IdempotencyKey;
-import com.firstcircle.banking.idempotency.IdempotencyRecord;
-import com.firstcircle.banking.idempotency.IdempotencyRepository;
-import com.firstcircle.banking.idempotency.IdempotencyResultKind;
 import com.firstcircle.banking.ledger.ContraAccountIds;
 import com.firstcircle.banking.repo.AccountRepository;
 import com.firstcircle.banking.repo.LedgerRepository;
@@ -33,9 +29,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 
 /**
  * The public façade for basic banking operations: account creation, deposit, withdrawal,
@@ -54,9 +48,9 @@ import java.util.function.Function;
  *       to net to zero per currency.</li>
  *   <li><b>FX</b> — cross-currency transfers convert at a spot rate and book the rounding residue to
  *       an FX contra account.</li>
- *   <li><b>Idempotency</b> — mutating operations can be made at-most-once via an
- *       {@link IdempotencyKey}; the key is claimed inside the same transaction, so retries return
- *       the original result without re-executing.</li>
+ *   <li><b>Idempotency</b> — a mutating operation may carry an {@link IdempotencyKey}, stored as a
+ *       {@code UNIQUE} column on the entity it produced. A duplicate key returns the original
+ *       result without re-executing; concurrent same-key races are resolved by the constraint.</li>
  * </ul>
  *
  * <p>All mutating operations are atomic: either the whole operation (balance changes + ledger
@@ -68,18 +62,15 @@ public final class BankingService {
     private final LedgerRepository ledger;
     private final ExchangeRateProvider fx;
     private final TransactionManager tm;
-    private final IdempotencyRepository idem;
     private final Clock clock;
     private final AtomicLong transactionSequence = new AtomicLong(0L);
 
     public BankingService(AccountRepository accounts, LedgerRepository ledger,
-                          ExchangeRateProvider fx, TransactionManager tm,
-                          IdempotencyRepository idem, Clock clock) {
+                          ExchangeRateProvider fx, TransactionManager tm, Clock clock) {
         this.accounts = Objects.requireNonNull(accounts);
         this.ledger = Objects.requireNonNull(ledger);
         this.fx = Objects.requireNonNull(fx);
         this.tm = Objects.requireNonNull(tm);
-        this.idem = Objects.requireNonNull(idem);
         this.clock = Objects.requireNonNull(clock);
     }
 
@@ -93,32 +84,35 @@ public final class BankingService {
         Objects.requireNonNull(ownerName, "ownerName");
         Objects.requireNonNull(currency, "currency");
         Objects.requireNonNull(initialDeposit, "initialDeposit");
-        String fingerprint = "CREATE|" + ownerName + "|" + currency.getCurrencyCode() + "|" + initialDeposit.minor();
-        return tm.run(conn -> doCreateAccount(conn, ownerName, currency, initialDeposit, key, fingerprint));
+        String rk = requestKey(key);
+        try {
+            return tm.run(conn -> doCreateAccount(conn, ownerName, currency, initialDeposit, rk));
+        } catch (UniqueViolationException e) {
+            if (rk == null) {
+                throw e;
+            }
+            return loadAccountByKey(rk, e);
+        }
     }
 
     private Account doCreateAccount(Connection conn, String ownerName, Currency currency,
-                                    Money initialDeposit, IdempotencyKey key, String fingerprint) {
-        AccountId id = AccountId.random();
-        if (key != null) {
-            Optional<Account> replay = resolveOrClaim(conn, key, fingerprint, id.value(),
-                    IdempotencyResultKind.ACCOUNT,
-                    ref -> accounts.findById(AccountId.of(ref), conn)
-                            .orElseThrow(() -> new DataAccessException("idempotent account missing: " + ref)));
-            if (replay.isPresent()) {
-                return replay.get();
+                                    Money initialDeposit, String rk) {
+        if (rk != null) {
+            Optional<Account> existing = accounts.findByRequestKey(rk, conn);
+            if (existing.isPresent()) {
+                return existing.get();
             }
         }
         if (!initialDeposit.currency().equals(currency)) {
             throw new CurrencyMismatchException(currency, initialDeposit.currency());
         }
-        Account account = new Account(id, ownerName, currency, initialDeposit.minor());
-        accounts.insert(account, conn);
+        Account account = new Account(AccountId.random(), ownerName, currency, initialDeposit.minor());
+        accounts.insert(account, rk, conn);
         if (initialDeposit.isPositive()) {
             Transaction tx = record(TransactionId.random(), TransactionType.CREATE, List.of(
                     LedgerEntry.credit(account.id(), currency, initialDeposit.minor()),
                     LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, currency, initialDeposit.minor())));
-            ledger.append(tx, conn);
+            ledger.append(tx, null, conn);
         }
         return account;
     }
@@ -132,29 +126,30 @@ public final class BankingService {
     public Transaction deposit(AccountId id, Money amount, IdempotencyKey key) {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(amount, "amount");
-        String fingerprint = depositFingerprint(id, amount);
-        return tm.run(conn -> doDeposit(conn, id, amount, key, fingerprint));
+        String rk = requestKey(key);
+        try {
+            return tm.run(conn -> doDeposit(conn, id, amount, rk));
+        } catch (UniqueViolationException e) {
+            return loadTransactionByKey(rk, e);
+        }
     }
 
-    private Transaction doDeposit(Connection conn, AccountId id, Money amount,
-                                  IdempotencyKey key, String fingerprint) {
-        TransactionId txId = TransactionId.random();
-        if (key != null) {
-            Optional<Transaction> replay = resolveOrClaim(conn, key, fingerprint, txId.value(),
-                    IdempotencyResultKind.TRANSACTION, ref -> loadTransaction(conn, ref));
-            if (replay.isPresent()) {
-                return replay.get();
+    private Transaction doDeposit(Connection conn, AccountId id, Money amount, String rk) {
+        if (rk != null) {
+            Optional<Transaction> existing = ledger.findByRequestKey(rk, conn);
+            if (existing.isPresent()) {
+                return existing.get();
             }
         }
         requirePositiveAmount(amount);
         Account account = accounts.findForUpdate(id, conn).orElseThrow(() -> new AccountNotFoundException(id));
         requireSameCurrency(amount.currency(), account.currency());
         account = account.credit(amount.minor());
-        Transaction tx = record(txId, TransactionType.DEPOSIT, List.of(
+        Transaction tx = record(TransactionId.random(), TransactionType.DEPOSIT, List.of(
                 LedgerEntry.credit(account.id(), account.currency(), amount.minor()),
                 LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, account.currency(), amount.minor())));
         accounts.update(account, conn);
-        ledger.append(tx, conn);
+        ledger.append(tx, rk, conn);
         return tx;
     }
 
@@ -167,18 +162,19 @@ public final class BankingService {
     public Transaction withdraw(AccountId id, Money amount, IdempotencyKey key) {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(amount, "amount");
-        String fingerprint = withdrawFingerprint(id, amount);
-        return tm.run(conn -> doWithdraw(conn, id, amount, key, fingerprint));
+        String rk = requestKey(key);
+        try {
+            return tm.run(conn -> doWithdraw(conn, id, amount, rk));
+        } catch (UniqueViolationException e) {
+            return loadTransactionByKey(rk, e);
+        }
     }
 
-    private Transaction doWithdraw(Connection conn, AccountId id, Money amount,
-                                   IdempotencyKey key, String fingerprint) {
-        TransactionId txId = TransactionId.random();
-        if (key != null) {
-            Optional<Transaction> replay = resolveOrClaim(conn, key, fingerprint, txId.value(),
-                    IdempotencyResultKind.TRANSACTION, ref -> loadTransaction(conn, ref));
-            if (replay.isPresent()) {
-                return replay.get();
+    private Transaction doWithdraw(Connection conn, AccountId id, Money amount, String rk) {
+        if (rk != null) {
+            Optional<Transaction> existing = ledger.findByRequestKey(rk, conn);
+            if (existing.isPresent()) {
+                return existing.get();
             }
         }
         requirePositiveAmount(amount);
@@ -188,11 +184,11 @@ public final class BankingService {
             throw new InsufficientFundsException(account.id(), account.balanceMinor(), amount.minor());
         }
         account = account.debit(amount.minor());
-        Transaction tx = record(txId, TransactionType.WITHDRAWAL, List.of(
+        Transaction tx = record(TransactionId.random(), TransactionType.WITHDRAWAL, List.of(
                 LedgerEntry.debit(account.id(), account.currency(), amount.minor()),
                 LedgerEntry.credit(ContraAccountIds.CASH_CONTRA, account.currency(), amount.minor())));
         accounts.update(account, conn);
-        ledger.append(tx, conn);
+        ledger.append(tx, rk, conn);
         return tx;
     }
 
@@ -206,22 +202,23 @@ public final class BankingService {
         Objects.requireNonNull(from, "from");
         Objects.requireNonNull(to, "to");
         Objects.requireNonNull(amount, "amount");
-        String fingerprint = transferFingerprint(from, to, amount);
-        return tm.run(conn -> doTransfer(conn, from, to, amount, key, fingerprint));
+        String rk = requestKey(key);
+        try {
+            return tm.run(conn -> doTransfer(conn, from, to, amount, rk));
+        } catch (UniqueViolationException e) {
+            return loadTransactionByKey(rk, e);
+        }
     }
 
-    private Transaction doTransfer(Connection conn, AccountId from, AccountId to, Money amount,
-                                   IdempotencyKey key, String fingerprint) {
+    private Transaction doTransfer(Connection conn, AccountId from, AccountId to, Money amount, String rk) {
         requirePositiveAmount(amount);
         if (from.equals(to)) {
             throw new SameAccountTransferException();
         }
-        TransactionId txId = TransactionId.random();
-        if (key != null) {
-            Optional<Transaction> replay = resolveOrClaim(conn, key, fingerprint, txId.value(),
-                    IdempotencyResultKind.TRANSACTION, ref -> loadTransaction(conn, ref));
-            if (replay.isPresent()) {
-                return replay.get();
+        if (rk != null) {
+            Optional<Transaction> existing = ledger.findByRequestKey(rk, conn);
+            if (existing.isPresent()) {
+                return existing.get();
             }
         }
 
@@ -244,12 +241,12 @@ public final class BankingService {
         if (source.currency().equals(destination.currency())) {
             source = source.debit(sourceMinor);
             destination = destination.credit(sourceMinor);
-            Transaction tx = record(txId, TransactionType.TRANSFER, List.of(
+            Transaction tx = record(TransactionId.random(), TransactionType.TRANSFER, List.of(
                     LedgerEntry.debit(source.id(), source.currency(), sourceMinor),
                     LedgerEntry.credit(destination.id(), destination.currency(), sourceMinor)));
             accounts.update(source, conn);
             accounts.update(destination, conn);
-            ledger.append(tx, conn);
+            ledger.append(tx, rk, conn);
             return tx;
         }
 
@@ -260,14 +257,14 @@ public final class BankingService {
 
         source = source.debit(sourceMinor);
         destination = destination.credit(destinationMinor);
-        Transaction tx = record(txId, TransactionType.TRANSFER, List.of(
+        Transaction tx = record(TransactionId.random(), TransactionType.TRANSFER, List.of(
                 LedgerEntry.debit(source.id(), source.currency(), sourceMinor),
                 LedgerEntry.credit(ContraAccountIds.FX_CONTRA, source.currency(), sourceMinor),
                 LedgerEntry.debit(ContraAccountIds.FX_CONTRA, destination.currency(), destinationMinor),
                 LedgerEntry.credit(destination.id(), destination.currency(), destinationMinor)));
         accounts.update(source, conn);
         accounts.update(destination, conn);
-        ledger.append(tx, conn);
+        ledger.append(tx, rk, conn);
         return tx;
     }
 
@@ -287,41 +284,28 @@ public final class BankingService {
 
     // ---------------------------------------------------------------- helpers
 
-    private Transaction loadTransaction(Connection conn, UUID txId) {
-        return ledger.findById(TransactionId.of(txId), conn)
-                .orElseThrow(() -> new DataAccessException("idempotent transaction missing: " + txId));
+    /** Unwrap the key, or null when no idempotency key was supplied. */
+    private static String requestKey(IdempotencyKey key) {
+        return key != null ? key.value() : null;
     }
 
-    /**
-     * Idempotency fast-path + race backstop. Returns the previously-stored result (replay) or claims
-     * the key and returns empty so the caller may proceed. Claiming happens <em>before</em> the work,
-     * so a request that loses the race has written nothing and simply returns the winner's result.
-     */
-    private <T> Optional<T> resolveOrClaim(Connection conn, IdempotencyKey key, String fingerprint,
-                                           UUID resultRef, IdempotencyResultKind kind,
-                                           Function<UUID, T> loader) {
-        Optional<IdempotencyRecord> existing = idem.findByKey(key, conn);
-        if (existing.isPresent()) {
-            IdempotencyRecord record = existing.get();
-            ensureFingerprintMatches(key, record, fingerprint);
-            return Optional.of(loader.apply(record.resultRef()));
+    /** After a lost same-key race: re-read the committed winner transaction in a fresh transaction. */
+    private Transaction loadTransactionByKey(String rk, UniqueViolationException cause) {
+        if (rk == null) {
+            throw cause;
         }
-        try {
-            idem.claim(key, fingerprint, kind, resultRef, conn);
-            return Optional.empty();
-        } catch (UniqueViolationException e) {
-            // A concurrent request claimed this key first; load its committed result.
-            IdempotencyRecord record = idem.findByKey(key, conn)
-                    .orElseThrow(() -> new DataAccessException("idempotency race: claimed key row not found"));
-            ensureFingerprintMatches(key, record, fingerprint);
-            return Optional.of(loader.apply(record.resultRef()));
-        }
+        return tm.run(conn -> ledger.findByRequestKey(rk, conn)
+                .orElseThrow(() -> new DataAccessException("idempotent transaction not found after race: " + rk, cause)));
     }
 
-    private static void ensureFingerprintMatches(IdempotencyKey key, IdempotencyRecord record, String fingerprint) {
-        if (!record.fingerprint().equals(fingerprint)) {
-            throw new IdempotencyConflictException(key, record.fingerprint(), fingerprint);
-        }
+    /** After a lost same-key race on createAccount: re-read the committed winner account. */
+    private Account loadAccountByKey(String rk, UniqueViolationException cause) {
+        return tm.run(conn -> accounts.findByRequestKey(rk, conn)
+                .orElseThrow(() -> new DataAccessException("idempotent account not found after race: " + rk, cause)));
+    }
+
+    private Transaction record(TransactionId id, TransactionType type, List<LedgerEntry> entries) {
+        return Transaction.create(id, transactionSequence.incrementAndGet(), clock.instant(), type, entries);
     }
 
     private static void requirePositiveAmount(Money amount) {
@@ -334,21 +318,5 @@ public final class BankingService {
         if (!amountCurrency.equals(accountCurrency)) {
             throw new CurrencyMismatchException(accountCurrency, amountCurrency);
         }
-    }
-
-    private Transaction record(TransactionId id, TransactionType type, List<LedgerEntry> entries) {
-        return Transaction.create(id, transactionSequence.incrementAndGet(), clock.instant(), type, entries);
-    }
-
-    private static String depositFingerprint(AccountId id, Money amount) {
-        return "DEPOSIT|" + id + "|" + amount.currency().getCurrencyCode() + "|" + amount.minor();
-    }
-
-    private static String withdrawFingerprint(AccountId id, Money amount) {
-        return "WITHDRAW|" + id + "|" + amount.currency().getCurrencyCode() + "|" + amount.minor();
-    }
-
-    private static String transferFingerprint(AccountId from, AccountId to, Money amount) {
-        return "TRANSFER|" + from + "|" + to + "|" + amount.currency().getCurrencyCode() + "|" + amount.minor();
     }
 }

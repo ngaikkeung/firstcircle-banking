@@ -5,7 +5,6 @@ import com.firstcircle.banking.db.H2DataSources;
 import com.firstcircle.banking.db.TransactionManager;
 import com.firstcircle.banking.fx.ExchangeRateProvider;
 import com.firstcircle.banking.fx.InMemoryExchangeRateProvider;
-import com.firstcircle.banking.idempotency.JdbcIdempotencyRepository;
 import com.firstcircle.banking.repo.JdbcAccountRepository;
 import com.firstcircle.banking.repo.JdbcLedgerRepository;
 import com.firstcircle.banking.repo.LedgerRepository;
@@ -57,7 +56,6 @@ public final class TestFixtures {
                 ledger,
                 defaultFx(),
                 tm,
-                new JdbcIdempotencyRepository(),
                 FIXED_CLOCK);
         return new ServiceWiring(service, dataSource, tm, ledger);
     }

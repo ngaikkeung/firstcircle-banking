@@ -1,6 +1,7 @@
 package com.firstcircle.banking.repo;
 
 import com.firstcircle.banking.db.DataAccessException;
+import com.firstcircle.banking.db.SqlExceptions;
 import com.firstcircle.banking.domain.AccountId;
 import com.firstcircle.banking.domain.EntryType;
 import com.firstcircle.banking.domain.LedgerEntry;
@@ -29,7 +30,7 @@ import java.util.UUID;
 public final class JdbcLedgerRepository implements LedgerRepository {
 
     private static final String INSERT_TX =
-            "INSERT INTO transactions (id, seq, created_at, type) VALUES (?, ?, ?, ?)";
+            "INSERT INTO transactions (id, seq, created_at, type, request_key) VALUES (?, ?, ?, ?, ?)";
     private static final String INSERT_ENTRY = "INSERT INTO ledger_entries "
             + "(transaction_id, account_id, currency, entry_type, signed_amount, ordinal) "
             + "VALUES (?, ?, ?, ?, ?, ?)";
@@ -40,15 +41,16 @@ public final class JdbcLedgerRepository implements LedgerRepository {
             + "FROM transactions t LEFT JOIN ledger_entries e ON e.transaction_id = t.id ";
 
     @Override
-    public void append(Transaction transaction, Connection c) {
+    public void append(Transaction transaction, String requestKey, Connection c) {
         try (PreparedStatement txPs = c.prepareStatement(INSERT_TX)) {
             txPs.setObject(1, transaction.id().value());
             txPs.setLong(2, transaction.sequence());
             txPs.setObject(3, OffsetDateTime.ofInstant(transaction.timestamp(), ZoneOffset.UTC));
             txPs.setString(4, transaction.type().name());
+            txPs.setString(5, requestKey);
             txPs.executeUpdate();
         } catch (SQLException e) {
-            throw new DataAccessException(e);
+            throw SqlExceptions.wrap(e); // 23505 (duplicate request_key) -> UniqueViolationException
         }
         try (PreparedStatement ePs = c.prepareStatement(INSERT_ENTRY)) {
             List<LedgerEntry> entries = transaction.entries();
@@ -64,7 +66,7 @@ public final class JdbcLedgerRepository implements LedgerRepository {
             }
             ePs.executeBatch();
         } catch (SQLException e) {
-            throw new DataAccessException(e);
+            throw SqlExceptions.wrap(e);
         }
     }
 
@@ -72,6 +74,17 @@ public final class JdbcLedgerRepository implements LedgerRepository {
     public Optional<Transaction> findById(TransactionId id, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(JOIN_SELECT + " WHERE t.id = ? ORDER BY e.ordinal")) {
             ps.setObject(1, id.value());
+            List<Transaction> rows = readGrouped(ps.executeQuery());
+            return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        } catch (SQLException e) {
+            throw new DataAccessException(e);
+        }
+    }
+
+    @Override
+    public Optional<Transaction> findByRequestKey(String requestKey, Connection c) {
+        try (PreparedStatement ps = c.prepareStatement(JOIN_SELECT + " WHERE t.request_key = ? ORDER BY e.ordinal")) {
+            ps.setString(1, requestKey);
             List<Transaction> rows = readGrouped(ps.executeQuery());
             return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
         } catch (SQLException e) {

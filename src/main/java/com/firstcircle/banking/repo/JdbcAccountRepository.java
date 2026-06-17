@@ -1,6 +1,7 @@
 package com.firstcircle.banking.repo;
 
 import com.firstcircle.banking.db.DataAccessException;
+import com.firstcircle.banking.db.SqlExceptions;
 import com.firstcircle.banking.domain.Account;
 import com.firstcircle.banking.domain.AccountId;
 import java.sql.Connection;
@@ -20,8 +21,10 @@ public final class JdbcAccountRepository implements AccountRepository {
     private static final String SELECT_BY_ID =
             "SELECT id, owner_name, currency, balance_minor FROM accounts WHERE id = ?";
     private static final String SELECT_FOR_UPDATE = SELECT_BY_ID + " FOR UPDATE";
+    private static final String SELECT_BY_REQUEST_KEY =
+            "SELECT id, owner_name, currency, balance_minor FROM accounts WHERE request_key = ?";
     private static final String INSERT =
-            "INSERT INTO accounts (id, owner_name, currency, balance_minor) VALUES (?, ?, ?, ?)";
+            "INSERT INTO accounts (id, owner_name, currency, balance_minor, request_key) VALUES (?, ?, ?, ?, ?)";
     private static final String UPDATE = "UPDATE accounts SET balance_minor = ? WHERE id = ?";
 
     @Override
@@ -35,13 +38,26 @@ public final class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
-    public void insert(Account account, Connection c) {
+    public void insert(Account account, String requestKey, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(INSERT)) {
             ps.setObject(1, account.id().value());
             ps.setString(2, account.ownerName());
             ps.setString(3, account.currency().getCurrencyCode());
             ps.setLong(4, account.balanceMinor());
+            ps.setString(5, requestKey);
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw SqlExceptions.wrap(e);
+        }
+    }
+
+    @Override
+    public Optional<Account> findByRequestKey(String requestKey, Connection c) {
+        try (PreparedStatement ps = c.prepareStatement(SELECT_BY_REQUEST_KEY)) {
+            ps.setString(1, requestKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(map(rs)) : Optional.empty();
+            }
         } catch (SQLException e) {
             throw new DataAccessException(e);
         }
