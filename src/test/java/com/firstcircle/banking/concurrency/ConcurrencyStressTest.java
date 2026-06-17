@@ -10,9 +10,6 @@ import com.firstcircle.banking.domain.Money;
 import com.firstcircle.banking.domain.Transaction;
 import com.firstcircle.banking.exceptions.InsufficientFundsException;
 import com.firstcircle.banking.exceptions.SameAccountTransferException;
-import com.firstcircle.banking.idempotency.InMemoryIdempotencyStore;
-import com.firstcircle.banking.repo.InMemoryAccountRepository;
-import com.firstcircle.banking.repo.InMemoryLedgerRepository;
 import java.util.ArrayList;
 import java.util.Currency;
 import java.util.HashMap;
@@ -23,7 +20,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,32 +27,27 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * Proves the service is correct under contention: no overdrafts, no lost updates, no lost money,
- * no deadlocks, and the ledger is never observed half-written. All tests use a start-gate
- * latch so threads truly run concurrently, and a {@link Timeout} so a deadlock would fail the
- * build rather than hang it.
+ * no deadlocks, and the ledger is never observed half-written. All tests use a start-gate latch so
+ * threads truly run concurrently, and a {@link Timeout} so a deadlock would fail the build rather
+ * than hang it.
+ *
+ * <p>Atomicity here is provided by H2 row locks ({@code SELECT ... FOR UPDATE} in canonical account
+ * order), not JVM locks.
  */
 class ConcurrencyStressTest {
 
     private static final Currency HKD = TestFixtures.HKD;
 
     private BankingService bank;
-    private InMemoryLedgerRepository ledger;
 
     @BeforeEach
     void setUp() {
-        ledger = new InMemoryLedgerRepository();
-        bank = new BankingService(
-                new InMemoryAccountRepository(),
-                ledger,
-                TestFixtures.defaultFx(),
-                new LockManager(),
-                new InMemoryIdempotencyStore(),
-                TestFixtures.FIXED_CLOCK);
+        bank = TestFixtures.newService();
     }
 
     /** HKD 100.00 funded; 50 threads each try to withdraw HKD 10.00 -> exactly 10 win, balance hits 0. */
     @Test
-    @Timeout(30)
+    @Timeout(60)
     void overdraftRaceExhaustsFundsExactly() throws Exception {
         Account a = bank.createAccount("A", HKD, Money.ofMinor(100_00, HKD));
         int threads = 50;
@@ -65,7 +56,7 @@ class ConcurrencyStressTest {
         ExecutorService exec = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
         List<Future<?>> futures = new ArrayList<>();
-        AtomicInteger successes = new AtomicInteger();
+        AtomicInteger successes = new AtomicInteger();   // note: java.util.concurrent.atomic.AtomicInteger
         AtomicInteger insufficient = new AtomicInteger();
         for (int i = 0; i < threads; i++) {
             futures.add(exec.submit(() -> {
@@ -91,7 +82,7 @@ class ConcurrencyStressTest {
 
     /** 100 concurrent deposits of HKD 1.00 must all be counted (no lost updates). */
     @Test
-    @Timeout(30)
+    @Timeout(60)
     void concurrentDepositsHaveNoLostUpdates() throws Exception {
         Account a = bank.createAccount("A", HKD, Money.ofMinor(1000_00, HKD)); // start HKD 1,000.00
         int threads = 100;
@@ -118,7 +109,7 @@ class ConcurrencyStressTest {
 
     /** Many random same-currency transfers across accounts: total money never changes. */
     @Test
-    @Timeout(60)
+    @Timeout(120)
     void closedSystemConservesMoney() throws Exception {
         int n = 10;
         List<Account> accountsList = new ArrayList<>();
@@ -166,7 +157,7 @@ class ConcurrencyStressTest {
 
     /** Half the threads transfer A->B, half B->A, concurrently -> exercises lock ordering; must not deadlock. */
     @Test
-    @Timeout(30)
+    @Timeout(60)
     void pingPongBetweenTwoAccountsDoesNotDeadlock() throws Exception {
         Account a = bank.createAccount("A", HKD, Money.ofMinor(500_00, HKD));
         Account b = bank.createAccount("B", HKD, Money.ofMinor(500_00, HKD));
@@ -214,7 +205,7 @@ class ConcurrencyStressTest {
 
     /** Every transaction in the ledger must still net to zero per currency (no partial writes). */
     private void assertLedgerBalanced() {
-        for (Transaction tx : ledger.findAll()) {
+        for (Transaction tx : bank.ledger()) {
             Map<Currency, Long> sums = new HashMap<>();
             for (LedgerEntry e : tx.entries()) {
                 sums.merge(e.currency(), e.signedAmount(), Long::sum);

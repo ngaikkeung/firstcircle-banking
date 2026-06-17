@@ -26,9 +26,9 @@ class BankingServiceBalanceTest {
 
         assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(120_00, TestFixtures.HKD)); // 100 + 50 - 30
 
-        long ledgerSum = wiring.ledger().entriesFor(a.id()).stream()
-                .mapToLong(LedgerEntry::signedAmount)
-                .sum();
+        long ledgerSum = wiring.readLedger((ledger, conn) -> ledger.entriesFor(a.id(), conn).stream()
+                        .mapToLong(LedgerEntry::signedAmount)
+                        .sum());
         assertThat(ledgerSum).isEqualTo(12_000L); // HKD 120.00 in minor units
     }
 }

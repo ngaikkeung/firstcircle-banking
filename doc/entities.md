@@ -133,7 +133,8 @@ Built only via `credit(...)` / `debit(...)`, which take a positive magnitude and
 
 ### `AccountId` / `TransactionId` / `IdempotencyKey`
 UUID-backed (ids) or string-backed (key) value objects with value equality. `AccountId` is
-`Comparable` so the `LockManager` can order locks deterministically.
+`Comparable` so the service can acquire `SELECT … FOR UPDATE` row locks in a single canonical
+order (deadlock-free).
 
 ## System (contra) accounts
 

@@ -9,8 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.ToString;
 
 /**
- * Immutable identity for an account. {@link Comparable} so the lock manager can
- * acquire per-account locks in a single global order, which is what makes
+ * Immutable identity for an account. {@link Comparable} so that {@code SELECT … FOR UPDATE}
+ * row locks can be acquired in a single canonical order, which is what makes
  * multi-account transfers deadlock-free.
  */
 @Getter

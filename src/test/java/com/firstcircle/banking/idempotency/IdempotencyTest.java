@@ -5,13 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.firstcircle.banking.BankingService;
 import com.firstcircle.banking.TestFixtures;
-import com.firstcircle.banking.concurrency.LockManager;
 import com.firstcircle.banking.domain.Account;
 import com.firstcircle.banking.domain.Money;
 import com.firstcircle.banking.domain.Transaction;
 import com.firstcircle.banking.exceptions.IdempotencyConflictException;
-import com.firstcircle.banking.repo.InMemoryAccountRepository;
-import com.firstcircle.banking.repo.InMemoryLedgerRepository;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -28,18 +25,12 @@ import org.junit.jupiter.api.Timeout;
 class IdempotencyTest {
 
     private BankingService bank;
-    private InMemoryIdempotencyStore store;
+    private TestFixtures.ServiceWiring wiring;
 
     @BeforeEach
     void setUp() {
-        store = new InMemoryIdempotencyStore();
-        bank = new BankingService(
-                new InMemoryAccountRepository(),
-                new InMemoryLedgerRepository(),
-                TestFixtures.defaultFx(),
-                new LockManager(),
-                store,
-                TestFixtures.FIXED_CLOCK);
+        wiring = TestFixtures.newServiceWithWiring();
+        bank = wiring.service();
     }
 
     @Test
@@ -71,7 +62,7 @@ class IdempotencyTest {
     }
 
     @Test
-    @Timeout(20)
+    @Timeout(30)
     void concurrentSameKeyExecutesExactlyOnce() throws Exception {
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         IdempotencyKey key = IdempotencyKey.of("concurrent-deposit");
@@ -91,18 +82,22 @@ class IdempotencyTest {
             txIds.add(f.get().id().value());
         }
         exec.shutdown();
-        assertThat(exec.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(exec.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
         assertThat(txIds).hasSize(1); // a single transaction was executed
         assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(110_00, TestFixtures.HKD)); // credited once
     }
 
     @Test
-    void noKeyBypassesTheStore() {
+    void noKeyLeavesNoIdempotencyRow() {
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
         bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
         assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
-        assertThat(store.size()).isZero(); // the store was never consulted
+
+        // No idempotency claim was recorded because no key was supplied.
+        JdbcIdempotencyRepository idem = new JdbcIdempotencyRepository();
+        long rows = wiring.tm().run(idem::count);
+        assertThat(rows).isZero();
     }
 }

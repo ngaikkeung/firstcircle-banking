@@ -29,8 +29,8 @@ challenged, and made the final calls.
 
 - **Requirements & design** — Claude helped interpret the brief, refine the user stories, and weigh
   design options: exact-`long` minor-unit money, a per-currency balanced double-entry ledger,
-  deadlock-free ordered per-account locking, ports & adapters, and idempotency keys. I chose the
-  approaches and set the constraints.
+  transaction-based concurrency (`SELECT … FOR UPDATE` in canonical account order), ports &
+  adapters, and DB-enforced idempotency. I chose the approaches and set the constraints.
 - **Planning** — I used Claude Code's plan mode to break the build into staged, reviewable steps and
   adjusted each plan before implementation.
 - **Implementation & tests** — Claude drafted code and the JUnit 5 / AssertJ tests (including

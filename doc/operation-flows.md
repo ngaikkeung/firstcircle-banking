@@ -1,8 +1,9 @@
 # Operation flows
 
 Step-by-step flows for each `BankingService` operation, plus the two cross-cutting concerns —
-concurrency (locking) and idempotency. Every mutating operation is **atomic**: all balance
-changes and the ledger posting happen together, under the relevant account locks, or not at all.
+concurrency (transactions + row locks) and idempotency. Every mutating operation is **atomic**:
+all balance changes and the ledger posting commit together in one database transaction, or — on
+any failure — the whole transaction rolls back, leaving nothing behind.
 
 ## Deposit
 
@@ -10,58 +11,63 @@ changes and the ledger posting happen together, under the relevant account locks
 sequenceDiagram
     participant C as Caller
     participant S as BankingService
-    participant I as IdempotencyStore
-    participant L as LockManager
+    participant TM as TransactionManager
+    participant IR as IdempotencyRepository
     participant R as AccountRepository
     participant G as LedgerRepository
 
     C->>S: deposit(accountId, amount[, key])
+    S->>TM: run(tx body)
+    TM->>TM: BEGIN (autoCommit=false)
     opt key provided
-        S->>I: executeOnce(key, fingerprint, op)
-        Note over I: at-most-once, replays return stored result
+        S->>IR: findByKey(key)
+        alt key exists, fingerprint matches
+            S-->>C: return stored transaction (replay)
+        else key absent
+            S->>IR: claim(key, fingerprint, txRef)
+            Note over IR: UNIQUE request_key = at-most-once gate
+        end
     end
     S->>S: requirePositiveAmount(amount)
-    S->>R: findById(accountId)
-    Note over S,R: fail-fast existence check (accounts are never deleted)
-    S->>L: acquireOrdered([accountId])
-    Note over L: lock the single account
-    S->>R: findById(accountId)
+    S->>R: findForUpdate(accountId)
+    Note over R: SELECT ... FOR UPDATE (row locked until commit)
     S->>S: requireSameCurrency(amount, account)
     S->>S: account = account.credit(amount.minor)
-    S->>R: save(account)
+    S->>R: update(account)
     S->>G: append(Transaction:<br/>credit account / debit CASH_CONTRA)
-    S->>L: releaseAll()
+    TM->>TM: COMMIT
     S-->>C: Transaction
 ```
 
 ## Withdrawal
 
-Same shape as deposit, but the sufficiency check runs **under the lock** so a concurrent
+Same shape as deposit, but the sufficiency check runs **with the row locked** so a concurrent
 withdrawal cannot overdraw:
 
 ```mermaid
 sequenceDiagram
     participant C as Caller
     participant S as BankingService
-    participant L as LockManager
+    participant TM as TransactionManager
     participant R as AccountRepository
     participant G as LedgerRepository
 
     C->>S: withdraw(accountId, amount)
+    S->>TM: run(tx body)
+    TM->>TM: BEGIN
     S->>S: requirePositiveAmount(amount)
-    S->>R: findById(accountId)
-    S->>L: acquireOrdered([accountId])
-    S->>R: findById(accountId)
+    S->>R: findForUpdate(accountId)
     S->>S: requireSameCurrency(amount, account)
     alt balance >= amount
         S->>S: account = account.debit(amount.minor)
-        S->>R: save(account)
+        S->>R: update(account)
         S->>G: append(Transaction:<br/>debit account / credit CASH_CONTRA)
+        TM->>TM: COMMIT
         S-->>C: Transaction
     else insufficient
-        Note over S: throw InsufficientFundsException<br/>(balance unchanged, nothing appended)
+        Note over S: throw InsufficientFundsException
+        TM->>TM: ROLLBACK (balance unchanged, nothing appended)
     end
-    S->>L: releaseAll()
 ```
 
 ## Transfer — same currency
@@ -70,22 +76,23 @@ sequenceDiagram
 sequenceDiagram
     participant C as Caller
     participant S as BankingService
-    participant L as LockManager
+    participant TM as TransactionManager
     participant R as AccountRepository
     participant G as LedgerRepository
 
     C->>S: transfer(from, to, amount)
+    S->>TM: run(tx body)
+    TM->>TM: BEGIN
     S->>S: amount > 0, from != to
-    S->>R: findById(from), findById(to)
-    S->>L: acquireOrdered([from, to])
-    Note over L: locks acquired in AccountId order → deadlock-free
-    S->>R: findById(from), findById(to)
+    S->>S: order ids [from, to] by AccountId.compareTo
+    S->>R: findForUpdate(first), findForUpdate(second)
+    Note over R: rows locked in canonical order → deadlock-free
     S->>S: requireSameCurrency(amount, source)
     S->>S: check source.balance >= amount
     S->>S: source.debit / destination.credit (same minor units)
-    S->>R: save(source), save(destination)
+    S->>R: update(source), update(destination)
     S->>G: append(Transaction:<br/>debit source / credit destination)
-    S->>L: releaseAll()
+    TM->>TM: COMMIT
     S-->>C: Transaction
 ```
 
@@ -99,24 +106,25 @@ independently:
 sequenceDiagram
     participant C as Caller
     participant S as BankingService
+    participant TM as TransactionManager
     participant F as ExchangeRateProvider
-    participant L as LockManager
     participant R as AccountRepository
     participant G as LedgerRepository
 
     C->>S: transfer(from, to, amount)
-    S->>L: acquireOrdered([from, to])
-    S->>R: findById(from), findById(to)
+    S->>TM: run(tx body)
+    TM->>TM: BEGIN
+    S->>R: findForUpdate(from), findForUpdate(to)
     S->>S: requireSameCurrency(amount, source)
     S->>F: rate(source.currency, destination.currency)
     alt rate missing
-        Note over S: throw FxRateUnavailableException (nothing mutated)
+        Note over S: throw FxRateUnavailableException → ROLLBACK (nothing mutated)
     end
     S->>S: amount.convert(dest.currency, rate) → destAmount (HALF_UP)
     S->>S: source.debit(sourceMinor), destination.credit(destMinor)
-    S->>R: save(source), save(destination)
+    S->>R: update(source), update(destination)
     S->>G: append(Transaction:<br/>debit source + credit FX_CONTRA (source ccy)<br/>debit FX_CONTRA + credit destination (dest ccy))
-    S->>L: releaseAll()
+    TM->>TM: COMMIT
     S-->>C: Transaction
 ```
 
@@ -126,67 +134,75 @@ sequenceDiagram
 sequenceDiagram
     participant C as Caller
     participant S as BankingService
+    participant TM as TransactionManager
     participant R as AccountRepository
     participant G as LedgerRepository
 
     C->>S: createAccount(owner, currency, initialDeposit)
+    S->>TM: run(tx body)
+    TM->>TM: BEGIN
     S->>S: initialDeposit.currency == currency
-    S->>S: AccountFactory.newAccount(...)
-    S->>R: save(account)
+    S->>S: new Account(randomId, ...)
+    S->>R: insert(account)
     opt initialDeposit > 0
         S->>G: append(Transaction type=CREATE:<br/>credit account / debit CASH_CONTRA)
     end
+    TM->>TM: COMMIT
     S-->>C: Account
-    Note over C,S: getBalance(id): acquireOrdered([id]) → findById → balance() → release
+    Note over C,S: getBalance(id): run tx → findById → balance()
 ```
 
 A zero opening deposit creates the account but posts no ledger transaction.
 
-## Concurrency: ordered locking
+## Concurrency: ordered row locking
 
-The `LockManager` always acquires account locks in `AccountId.compareTo` order. Two transfers
+Accounts are always locked (`SELECT … FOR UPDATE`) in `AccountId.compareTo` order. Two transfers
 running in opposite directions between the same accounts therefore request the **same** lock
-sequence — there is no cyclic wait, so the system cannot deadlock.
+sequence — there is no cyclic wait, so the system cannot deadlock. Locks are held until the
+transaction commits or rolls back.
 
 ```mermaid
 flowchart LR
-    subgraph T1["Thread 1: transfer A → B"]
-        T1A["order [A,B]"] --> T1L1["lock A"]
-        T1L1 --> T1L2["lock B"]
-        T1L2 --> T1W["work"]
+    subgraph T1["Tx 1: transfer A → B"]
+        T1A["order [A,B]"] --> T1L1["FOR UPDATE A"]
+        T1L1 --> T1L2["FOR UPDATE B"]
+        T1L2 --> T1W["work + commit"]
     end
-    subgraph T2["Thread 2: transfer B → A"]
-        T2A["order [A,B]"] --> T2L1["lock A"]
-        T2L1 --> T2L2["lock B"]
-        T2L2 --> T2W["work"]
+    subgraph T2["Tx 2: transfer B → A"]
+        T2A["order [A,B]"] --> T2L1["FOR UPDATE A"]
+        T2L1 --> T2L2["FOR UPDATE B"]
+        T2L2 --> T2W["work + commit"]
     end
 
-    T1L1 -.->|blocks T2L1| T2L1
+    T1L1 -.->|blocks T2L1 until commit| T2L1
 ```
 
-Self-transfers are de-duplicated before locking (the id set has one element), so a single lock is
-taken. Locks are released in reverse acquisition order in a `finally` block. This same
-"canonical lock order" maps directly onto `SELECT … FOR UPDATE` ordering in a future database
-adapter.
+Self-transfers are de-duplicated before locking (the id set has one element), so a single row is
+locked. H2's MVCC (on by default in 2.x) provides row-level locking for `FOR UPDATE`; a generous
+`LOCK_TIMEOUT` ensures a contended lock waits rather than failing fast — canonical ordering means
+the wait always resolves.
 
 ## Idempotency: at-most-once execution
 
-Mutating operations accept an optional `IdempotencyKey`. The store claims the key atomically
-(`putIfAbsent`); the first caller executes and stores the result (success **or** the thrown
-business exception); concurrent or replayed duplicates with the same key wait for and return that
-single result. Reusing a key with **different** parameters is rejected.
+Mutating operations accept an optional `IdempotencyKey`. The key is claimed **inside the
+transaction** (a `UNIQUE` constraint on `request_key`): the first caller to commit wins and stores
+its result reference; concurrent or replayed duplicates load and return that result. Reusing a key
+with **different** parameters is rejected as a conflict.
 
 ```mermaid
 flowchart TD
-    Start([op with key]) --> Claim["store.putIfAbsent(key, newRecord)"]
-    Claim --> Owner?{"owner?"}
-    Owner? -->|"yes (new key)"| Run["execute operation"]
-    Run --> Complete["complete future with result/exception"]
-    Complete --> Done([return result])
-    Owner? -->|"no (key exists)"| Fp{"fingerprint<br/>matches?"}
-    Fp -->|"no"| Conflict(["throw IdempotencyConflictException"])
-    Fp -->|"yes"| Join["future.join() — wait for the single execution"]
-    Join --> Replay([return stored result / rethrow stored exception])
+    Start([op with key, in tx]) --> Find["idem.findByKey(key)"]
+    Find --> Exists?{"key exists?"}
+    Exists? -->|"yes"| Fp{"fingerprint<br/>matches?"}
+    Fp -->|"no"| Conflict(["throw IdempotencyConflictException → rollback"])
+    Fp -->|"yes"| Load["load stored result by ref"]
+    Load --> Replay([return stored result])
+    Exists? -->|"no"| Claim["idem.claim(key)"]
+    Claim --> Race?{"UNIQUE<br/>violated?"}
+    Race? -->|"yes (lost race)"| Find2["findByKey → load winner"] --> Replay
+    Race? -->|"no"| Work["execute operation"] --> Commit([commit tx, store result ref])
 ```
 
-Operations called without a key bypass the store entirely and always execute.
+Claiming before doing the work means a request that loses the race has written nothing; claiming
+inside the transaction means a rolled-back (failed) operation frees its key. Operations called
+without a key bypass idempotency entirely and always execute.

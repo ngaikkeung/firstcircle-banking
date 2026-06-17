@@ -1,21 +1,23 @@
 package com.firstcircle.banking.demo;
 
 import com.firstcircle.banking.BankingService;
-import com.firstcircle.banking.concurrency.LockManager;
+import com.firstcircle.banking.db.DatabaseInitializer;
+import com.firstcircle.banking.db.H2DataSources;
+import com.firstcircle.banking.db.TransactionManager;
 import com.firstcircle.banking.domain.Account;
 import com.firstcircle.banking.domain.Money;
 import com.firstcircle.banking.domain.Transaction;
 import com.firstcircle.banking.fx.InMemoryExchangeRateProvider;
 import com.firstcircle.banking.idempotency.IdempotencyKey;
-import com.firstcircle.banking.idempotency.InMemoryIdempotencyStore;
-import com.firstcircle.banking.repo.InMemoryAccountRepository;
-import com.firstcircle.banking.repo.InMemoryLedgerRepository;
-import com.firstcircle.banking.repo.LedgerRepository;
+import com.firstcircle.banking.idempotency.JdbcIdempotencyRepository;
+import com.firstcircle.banking.repo.JdbcAccountRepository;
+import com.firstcircle.banking.repo.JdbcLedgerRepository;
 import java.time.Clock;
 import java.util.Currency;
+import javax.sql.DataSource;
 
 /**
- * A small runnable example that wires the in-memory adapters together and exercises the full
+ * A small runnable example that wires the H2-backed adapters together and exercises the full
  * lifecycle: multi-currency account creation, deposit, cross-currency transfer, withdrawal, and
  * an idempotent deposit replay.
  *
@@ -25,18 +27,20 @@ import java.util.Currency;
 public final class Demo {
 
     public static void main(String[] args) {
+        DataSource dataSource = H2DataSources.inMemory("demo");
+        DatabaseInitializer.init(dataSource);
+        var tm = new TransactionManager(dataSource);
+
         var fx = InMemoryExchangeRateProvider.builder()
                 .rate("HKD", "USD", "0.128")
                 .rate("USD", "HKD", "7.8")
                 .build();
-        InMemoryAccountRepository accounts = new InMemoryAccountRepository();
-        LedgerRepository ledger = new InMemoryLedgerRepository();
         var bank = new BankingService(
-                accounts,
-                ledger,
+                new JdbcAccountRepository(),
+                new JdbcLedgerRepository(),
                 fx,
-                new LockManager(),
-                new InMemoryIdempotencyStore(),
+                tm,
+                new JdbcIdempotencyRepository(),
                 Clock.systemUTC());
 
         Currency hkd = Currency.getInstance("HKD");
@@ -64,8 +68,8 @@ public final class Demo {
         println("Idempotent deposit replay returned same transaction id: " + first.id().equals(replay.id()));
         println("  Acme (HKD): " + bank.getBalance(acme.id()));
 
-        println("--- Ledger (" + ledger.findAll().size() + " transactions) ---");
-        for (Transaction tx : ledger.findAll()) {
+        println("--- Ledger (" + bank.ledger().size() + " transactions) ---");
+        for (Transaction tx : bank.ledger()) {
             println("  " + tx);
         }
     }

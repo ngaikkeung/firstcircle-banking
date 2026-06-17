@@ -9,12 +9,12 @@ import lombok.ToString;
  * balance only ever changes by producing a <em>new</em> {@code Account} via
  * {@link #credit(long)} / {@link #debit(long)}.
  *
- * <p>Because {@code Account} is immutable, it is trivially safe to publish and read. The
- * per-account lock from {@code LockManager} serialises the <em>read-modify-write</em> of the
- * account's repository entry: while a thread holds an account's lock it can load the current
- * {@code Account}, compute a credited/debited copy, and store it back with no other thread
- * able to interleave. The lock is keyed by the stable {@link AccountId}, not the object
- * reference, so replacing the instance each update is safe.
+ * <p>Because {@code Account} is immutable, it is trivially safe to publish and read. The database
+ * transaction (plus {@code SELECT ... FOR UPDATE} on the account's row) serialises the
+ * <em>read-modify-write</em> of the stored balance: within its transaction a thread loads the
+ * current row locked, computes a credited/debited copy, and writes it back, with no other
+ * transaction able to interleave. The lock is keyed by the stable {@link AccountId}, so updating
+ * the stored row each time is safe.
  */
 @Getter
 @ToString

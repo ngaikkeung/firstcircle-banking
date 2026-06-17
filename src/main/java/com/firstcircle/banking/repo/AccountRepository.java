@@ -2,24 +2,32 @@ package com.firstcircle.banking.repo;
 
 import com.firstcircle.banking.domain.Account;
 import com.firstcircle.banking.domain.AccountId;
-import java.util.Collection;
+import java.sql.Connection;
 import java.util.Optional;
 
 /**
  * Port for account storage.
  *
- * <p><b>Concurrency contract:</b> implementations are individually thread-safe, but they do
- * NOT provide multi-key atomicity. Acquiring locks for multi-account operations is the
- * responsibility of {@code BankingService} via {@code LockManager}. A future database adapter
- * would back these calls with {@code SELECT ... FOR UPDATE} while preserving that contract.
+ * <p><b>Concurrency contract:</b> every method runs against the {@link Connection} the caller
+ * supplies, so the reads, writes, and row locks of one banking operation all share a single
+ * transaction. Multi-account atomicity is provided by that transaction (plus
+ * {@code SELECT ... FOR UPDATE} acquired in canonical {@code AccountId} order inside
+ * {@code BankingService}); the repository itself owns no locking.
+ *
+ * <p>{@link #findForUpdate(AccountId, Connection)} locks the account's row for the duration of the
+ * transaction; {@link #findById(AccountId, Connection)} is a non-locking read.
  */
 public interface AccountRepository {
 
-    Account save(Account account);
+    /** Locking read: {@code SELECT ... FOR UPDATE}. The row stays locked until the tx commits/rolls back. */
+    Optional<Account> findForUpdate(AccountId id, Connection connection);
 
-    Optional<Account> findById(AccountId id);
+    /** Non-locking read. */
+    Optional<Account> findById(AccountId id, Connection connection);
 
-    boolean existsById(AccountId id);
+    /** Insert a newly-created account. */
+    void insert(Account account, Connection connection);
 
-    Collection<Account> findAll();
+    /** Update an existing account's mutable fields (balance). Id and currency are immutable. */
+    void update(Account account, Connection connection);
 }

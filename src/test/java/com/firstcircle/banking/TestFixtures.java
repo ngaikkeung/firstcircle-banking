@@ -1,16 +1,21 @@
 package com.firstcircle.banking;
 
-import com.firstcircle.banking.concurrency.LockManager;
+import com.firstcircle.banking.db.DatabaseInitializer;
+import com.firstcircle.banking.db.H2DataSources;
+import com.firstcircle.banking.db.TransactionManager;
 import com.firstcircle.banking.fx.ExchangeRateProvider;
 import com.firstcircle.banking.fx.InMemoryExchangeRateProvider;
-import com.firstcircle.banking.idempotency.InMemoryIdempotencyStore;
-import com.firstcircle.banking.repo.InMemoryAccountRepository;
-import com.firstcircle.banking.repo.InMemoryLedgerRepository;
+import com.firstcircle.banking.idempotency.JdbcIdempotencyRepository;
+import com.firstcircle.banking.repo.JdbcAccountRepository;
+import com.firstcircle.banking.repo.JdbcLedgerRepository;
 import com.firstcircle.banking.repo.LedgerRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Currency;
+import java.util.UUID;
+import java.util.function.BiFunction;
+import javax.sql.DataSource;
 
 /** Shared constants and wiring helpers for tests. */
 public final class TestFixtures {
@@ -36,26 +41,40 @@ public final class TestFixtures {
                 .build();
     }
 
-    /** A fresh, fully-isolated service with the default FX table and no persisted state. */
+    /** A fresh, fully-isolated service (own in-memory H2 database) with the default FX table. */
     public static BankingService newService() {
-        return new BankingService(
-                new InMemoryAccountRepository(),
-                new InMemoryLedgerRepository(),
-                defaultFx(),
-                new LockManager(),
-                new InMemoryIdempotencyStore(),
-                FIXED_CLOCK);
+        return newServiceWithWiring().service();
     }
 
-    /** A service plus its ledger repository, for tests that inspect the ledger. */
+    /** A service plus its JDBC pieces, for tests that inspect storage directly. */
     public static ServiceWiring newServiceWithWiring() {
-        InMemoryAccountRepository accounts = new InMemoryAccountRepository();
-        LedgerRepository ledger = new InMemoryLedgerRepository();
+        DataSource dataSource = H2DataSources.inMemory("test-" + UUID.randomUUID());
+        DatabaseInitializer.init(dataSource);
+        TransactionManager tm = new TransactionManager(dataSource);
+        JdbcLedgerRepository ledger = new JdbcLedgerRepository();
         BankingService service = new BankingService(
-                accounts, ledger, defaultFx(), new LockManager(), new InMemoryIdempotencyStore(), FIXED_CLOCK);
-        return new ServiceWiring(service, accounts, ledger);
+                new JdbcAccountRepository(),
+                ledger,
+                defaultFx(),
+                tm,
+                new JdbcIdempotencyRepository(),
+                FIXED_CLOCK);
+        return new ServiceWiring(service, dataSource, tm, ledger);
     }
 
-    public record ServiceWiring(BankingService service, InMemoryAccountRepository accounts, LedgerRepository ledger) {
+    /**
+     * The service plus its H2 pieces. {@code tm} lets tests run read-only queries against the same
+     * connection pool (repository read methods take a {@link java.sql.Connection}).
+     */
+    public record ServiceWiring(
+            BankingService service,
+            DataSource dataSource,
+            TransactionManager tm,
+            LedgerRepository ledger) {
+
+        /** Run a read against the ledger within a transaction (the reader gets the connection). */
+        public <T> T readLedger(BiFunction<LedgerRepository, java.sql.Connection, T> reader) {
+            return tm.run(conn -> reader.apply(ledger, conn));
+        }
     }
 }
