@@ -40,10 +40,10 @@ public final class JdbcAccountRepository implements AccountRepository {
     @Override
     public void insert(Account account, String requestKey, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(INSERT)) {
-            ps.setObject(1, account.id().value());
-            ps.setString(2, account.ownerName());
-            ps.setString(3, account.currency().getCurrencyCode());
-            ps.setLong(4, account.balanceMinor());
+            ps.setObject(1, account.getId().getValue());
+            ps.setString(2, account.getOwnerName());
+            ps.setString(3, account.getCurrency().getCurrencyCode());
+            ps.setLong(4, account.getBalanceMinor());
             ps.setString(5, requestKey);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -66,11 +66,11 @@ public final class JdbcAccountRepository implements AccountRepository {
     @Override
     public void update(Account account, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(UPDATE)) {
-            ps.setLong(1, account.balanceMinor());
-            ps.setObject(2, account.id().value());
+            ps.setLong(1, account.getBalanceMinor());
+            ps.setObject(2, account.getId().getValue());
             int rows = ps.executeUpdate();
             if (rows == 0) {
-                throw new DataAccessException("account not found on update: " + account.id());
+                throw new DataAccessException("account not found on update: " + account.getId());
             }
         } catch (SQLException e) {
             throw new DataAccessException(e);
@@ -79,7 +79,7 @@ public final class JdbcAccountRepository implements AccountRepository {
 
     private Optional<Account> select(String sql, AccountId id, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, id.value());
+            ps.setObject(1, id.getValue());
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(map(rs)) : Optional.empty();
             }

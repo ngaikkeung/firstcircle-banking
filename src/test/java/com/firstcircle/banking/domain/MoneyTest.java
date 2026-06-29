@@ -58,8 +58,8 @@ class MoneyTest {
         // HKD 123.45 @ 0.0175 = 2.160375 USD -> 2.16 USD (216 cents), HALF_UP.
         Money hkd = Money.ofMinor(12345, TestFixtures.HKD);
         Money usd = hkd.convert(TestFixtures.USD, new BigDecimal("0.0175"));
-        assertThat(usd.minor()).isEqualTo(216L);
-        assertThat(usd.currency()).isEqualTo(TestFixtures.USD);
+        assertThat(usd.getMinor()).isEqualTo(216L);
+        assertThat(usd.getCurrency()).isEqualTo(TestFixtures.USD);
     }
 
     @Test
@@ -67,7 +67,7 @@ class MoneyTest {
         // USD 1.00 @ 150 = 150 JPY (0 fraction digits).
         Money usd = Money.ofMinor(100, TestFixtures.USD);
         Money jpy = usd.convert(TestFixtures.JPY, new BigDecimal("150"));
-        assertThat(jpy.minor()).isEqualTo(150L);
+        assertThat(jpy.getMinor()).isEqualTo(150L);
         assertThat(jpy).hasToString("JPY 150");
     }
 
@@ -76,7 +76,7 @@ class MoneyTest {
         // 1.005 USD-ish: HKD 100.00 @ 0.01005 = 1.005 USD -> HALF_UP -> 1.01 USD (101 cents).
         Money hkd = Money.ofMinor(10000, TestFixtures.HKD);
         Money usd = hkd.convert(TestFixtures.USD, new BigDecimal("0.01005"));
-        assertThat(usd.minor()).isEqualTo(101L);
+        assertThat(usd.getMinor()).isEqualTo(101L);
     }
 
     @Test

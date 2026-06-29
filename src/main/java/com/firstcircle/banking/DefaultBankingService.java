@@ -101,15 +101,15 @@ public final class DefaultBankingService implements BankingService {
                 return existing.get();
             }
         }
-        if (!initialDeposit.currency().equals(currency)) {
-            throw new CurrencyMismatchException(currency, initialDeposit.currency());
+        if (!initialDeposit.getCurrency().equals(currency)) {
+            throw new CurrencyMismatchException(currency, initialDeposit.getCurrency());
         }
-        Account account = new Account(AccountId.random(), ownerName, currency, initialDeposit.minor());
+        Account account = new Account(AccountId.random(), ownerName, currency, initialDeposit.getMinor());
         accounts.insert(account, rk, conn);
         if (initialDeposit.isPositive()) {
             Transaction tx = record(TransactionId.random(), TransactionType.CREATE, List.of(
-                    LedgerEntry.credit(account.id(), currency, initialDeposit.minor()),
-                    LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, currency, initialDeposit.minor())));
+                    LedgerEntry.credit(account.getId(), currency, initialDeposit.getMinor()),
+                    LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, currency, initialDeposit.getMinor())));
             ledger.append(tx, null, conn);
         }
         return account;
@@ -143,11 +143,11 @@ public final class DefaultBankingService implements BankingService {
         }
         requirePositiveAmount(amount);
         Account account = accounts.findForUpdate(id, conn).orElseThrow(() -> new AccountNotFoundException(id));
-        requireSameCurrency(amount.currency(), account.currency());
-        account = account.credit(amount.minor());
+        requireSameCurrency(amount.getCurrency(), account.getCurrency());
+        account = account.credit(amount.getMinor());
         Transaction tx = record(TransactionId.random(), TransactionType.DEPOSIT, List.of(
-                LedgerEntry.credit(account.id(), account.currency(), amount.minor()),
-                LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, account.currency(), amount.minor())));
+                LedgerEntry.credit(account.getId(), account.getCurrency(), amount.getMinor()),
+                LedgerEntry.debit(ContraAccountIds.CASH_CONTRA, account.getCurrency(), amount.getMinor())));
         accounts.update(account, conn);
         ledger.append(tx, rk, conn);
         return tx;
@@ -181,14 +181,14 @@ public final class DefaultBankingService implements BankingService {
         }
         requirePositiveAmount(amount);
         Account account = accounts.findForUpdate(id, conn).orElseThrow(() -> new AccountNotFoundException(id));
-        requireSameCurrency(amount.currency(), account.currency());
-        if (account.balanceMinor() < amount.minor()) {
-            throw new InsufficientFundsException(account.id(), account.balanceMinor(), amount.minor());
+        requireSameCurrency(amount.getCurrency(), account.getCurrency());
+        if (account.getBalanceMinor() < amount.getMinor()) {
+            throw new InsufficientFundsException(account.getId(), account.getBalanceMinor(), amount.getMinor());
         }
-        account = account.debit(amount.minor());
+        account = account.debit(amount.getMinor());
         Transaction tx = record(TransactionId.random(), TransactionType.WITHDRAWAL, List.of(
-                LedgerEntry.debit(account.id(), account.currency(), amount.minor()),
-                LedgerEntry.credit(ContraAccountIds.CASH_CONTRA, account.currency(), amount.minor())));
+                LedgerEntry.debit(account.getId(), account.getCurrency(), amount.getMinor()),
+                LedgerEntry.credit(ContraAccountIds.CASH_CONTRA, account.getCurrency(), amount.getMinor())));
         accounts.update(account, conn);
         ledger.append(tx, rk, conn);
         return tx;
@@ -232,22 +232,22 @@ public final class DefaultBankingService implements BankingService {
                 .orElseThrow(() -> new AccountNotFoundException(ordered.get(0)));
         Account second = accounts.findForUpdate(ordered.get(1), conn)
                 .orElseThrow(() -> new AccountNotFoundException(ordered.get(1)));
-        Account source = first.id().equals(from) ? first : second;
-        Account destination = first.id().equals(to) ? first : second;
+        Account source = first.getId().equals(from) ? first : second;
+        Account destination = first.getId().equals(to) ? first : second;
 
         // The transfer amount is expressed in the source account's currency.
-        requireSameCurrency(amount.currency(), source.currency());
-        if (source.balanceMinor() < amount.minor()) {
-            throw new InsufficientFundsException(source.id(), source.balanceMinor(), amount.minor());
+        requireSameCurrency(amount.getCurrency(), source.getCurrency());
+        if (source.getBalanceMinor() < amount.getMinor()) {
+            throw new InsufficientFundsException(source.getId(), source.getBalanceMinor(), amount.getMinor());
         }
 
-        long sourceMinor = amount.minor();
-        if (source.currency().equals(destination.currency())) {
+        long sourceMinor = amount.getMinor();
+        if (source.getCurrency().equals(destination.getCurrency())) {
             source = source.debit(sourceMinor);
             destination = destination.credit(sourceMinor);
             Transaction tx = record(TransactionId.random(), TransactionType.TRANSFER, List.of(
-                    LedgerEntry.debit(source.id(), source.currency(), sourceMinor),
-                    LedgerEntry.credit(destination.id(), destination.currency(), sourceMinor)));
+                    LedgerEntry.debit(source.getId(), source.getCurrency(), sourceMinor),
+                    LedgerEntry.credit(destination.getId(), destination.getCurrency(), sourceMinor)));
             accounts.update(source, conn);
             accounts.update(destination, conn);
             ledger.append(tx, rk, conn);
@@ -256,16 +256,16 @@ public final class DefaultBankingService implements BankingService {
 
         // Cross-currency: convert at the spot rate; the FX contra absorbs the position and any
         // rounding residue so each currency leg independently nets to zero.
-        BigDecimal rate = fx.rate(source.currency(), destination.currency()); // throws if unavailable
-        long destinationMinor = amount.convert(destination.currency(), rate).minor();
+        BigDecimal rate = fx.rate(source.getCurrency(), destination.getCurrency()); // throws if unavailable
+        long destinationMinor = amount.convert(destination.getCurrency(), rate).getMinor();
 
         source = source.debit(sourceMinor);
         destination = destination.credit(destinationMinor);
         Transaction tx = record(TransactionId.random(), TransactionType.TRANSFER, List.of(
-                LedgerEntry.debit(source.id(), source.currency(), sourceMinor),
-                LedgerEntry.credit(ContraAccountIds.FX_CONTRA, source.currency(), sourceMinor),
-                LedgerEntry.debit(ContraAccountIds.FX_CONTRA, destination.currency(), destinationMinor),
-                LedgerEntry.credit(destination.id(), destination.currency(), destinationMinor)));
+                LedgerEntry.debit(source.getId(), source.getCurrency(), sourceMinor),
+                LedgerEntry.credit(ContraAccountIds.FX_CONTRA, source.getCurrency(), sourceMinor),
+                LedgerEntry.debit(ContraAccountIds.FX_CONTRA, destination.getCurrency(), destinationMinor),
+                LedgerEntry.credit(destination.getId(), destination.getCurrency(), destinationMinor)));
         accounts.update(source, conn);
         accounts.update(destination, conn);
         ledger.append(tx, rk, conn);
@@ -291,7 +291,7 @@ public final class DefaultBankingService implements BankingService {
 
     /** Unwrap the key, or null when no idempotency key was supplied. */
     private static String requestKey(IdempotencyKey key) {
-        return key != null ? key.value() : null;
+        return key != null ? key.getValue() : null;
     }
 
     /** After a lost same-key race: re-read the committed winner transaction in a fresh transaction. */

@@ -21,10 +21,10 @@ class BankingServiceTxRollbackTest {
         long txCountBefore = bank.ledger().size();
 
         // HKD 1,000.00 requested against an HKD 100.00 balance -> must fail, atomically.
-        assertThatThrownBy(() -> bank.withdraw(a.id(), Money.ofMinor(1000_00, TestFixtures.HKD)))
+        assertThatThrownBy(() -> bank.withdraw(a.getId(), Money.ofMinor(1000_00, TestFixtures.HKD)))
                 .isInstanceOf(InsufficientFundsException.class);
 
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD)); // unchanged
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD)); // unchanged
         assertThat(bank.ledger().size()).isEqualTo(txCountBefore); // no ledger row written
     }
 
@@ -36,12 +36,12 @@ class BankingServiceTxRollbackTest {
         var b = bank.createAccount("B", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         long txCountBefore = bank.ledger().size();
 
-        assertThatThrownBy(() -> bank.transfer(a.id(), b.id(), Money.ofMinor(999_00, TestFixtures.HKD)))
+        assertThatThrownBy(() -> bank.transfer(a.getId(), b.getId(), Money.ofMinor(999_00, TestFixtures.HKD)))
                 .isInstanceOf(InsufficientFundsException.class);
 
         // Neither account moved, and nothing was posted.
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
-        assertThat(bank.getBalance(b.id())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
+        assertThat(bank.getBalance(b.getId())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
         assertThat(bank.ledger().size()).isEqualTo(txCountBefore);
     }
 }

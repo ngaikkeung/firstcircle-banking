@@ -34,19 +34,19 @@ class IdempotencyTest {
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         IdempotencyKey key = IdempotencyKey.of("dep-1");
 
-        Transaction first = bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), key);
-        Transaction replay = bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), key);
+        Transaction first = bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD), key);
+        Transaction replay = bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD), key);
 
-        assertThat(replay.id()).isEqualTo(first.id());
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(150_00, TestFixtures.HKD)); // credited once
+        assertThat(replay.getId()).isEqualTo(first.getId());
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(150_00, TestFixtures.HKD)); // credited once
     }
 
     @Test
     void differentKeysExecuteIndependently() {
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
-        bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), IdempotencyKey.of("k1"));
-        bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), IdempotencyKey.of("k2"));
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
+        bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD), IdempotencyKey.of("k1"));
+        bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD), IdempotencyKey.of("k2"));
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
     }
 
     @Test
@@ -56,11 +56,11 @@ class IdempotencyTest {
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
         IdempotencyKey key = IdempotencyKey.of("k");
 
-        Transaction first = bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD), key);
-        Transaction second = bank.deposit(a.id(), Money.ofMinor(99_00, TestFixtures.HKD), key);
+        Transaction first = bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD), key);
+        Transaction second = bank.deposit(a.getId(), Money.ofMinor(99_00, TestFixtures.HKD), key);
 
-        assertThat(second.id()).isEqualTo(first.id());                       // returns the original
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(150_00, TestFixtures.HKD)); // 50 credited once
+        assertThat(second.getId()).isEqualTo(first.getId());                       // returns the original
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(150_00, TestFixtures.HKD)); // 50 credited once
     }
 
     @Test
@@ -75,27 +75,27 @@ class IdempotencyTest {
         for (int i = 0; i < threads; i++) {
             futures.add(exec.submit(() -> {
                 start.await();
-                return bank.deposit(a.id(), Money.ofMinor(10_00, TestFixtures.HKD), key);
+                return bank.deposit(a.getId(), Money.ofMinor(10_00, TestFixtures.HKD), key);
             }));
         }
         start.countDown();
         Set<java.util.UUID> txIds = new HashSet<>();
         for (Future<Transaction> f : futures) {
-            txIds.add(f.get().id().value());
+            txIds.add(f.get().getId().getValue());
         }
         exec.shutdown();
         assertThat(exec.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
         assertThat(txIds).hasSize(1); // a single transaction was executed
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(110_00, TestFixtures.HKD)); // credited once
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(110_00, TestFixtures.HKD)); // credited once
     }
 
     @Test
     void noKeyAlwaysExecutes() {
         // Operations without a key are never deduped: both deposits apply.
         Account a = bank.createAccount("A", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
-        bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
-        bank.deposit(a.id(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
+        bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
+        bank.deposit(a.getId(), Money.ofMinor(50_00, TestFixtures.HKD)); // no key
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(200_00, TestFixtures.HKD)); // both applied
     }
 }

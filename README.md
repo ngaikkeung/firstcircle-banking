@@ -203,9 +203,9 @@ src/test/java/com/firstcircle/banking/
 
 Production code depends on the JDK plus **Lombok** (compile-time only, `provided` scope), which
 generates the value objects' getters, constructors, `equals`/`hashCode`, and `toString`, and
-**H2** (the in-memory database). A project-wide `lombok.config` sets fluent accessors
-(`minor()`, `currency()`, `id()`, …) so the generated methods match the hand-written API. Validation
-logic and currency-aware formatting are kept explicit. Tests use JUnit 5 and AssertJ.
+**H2** (the in-memory database). Generated getters are standard JavaBean style
+(`getMinor()`, `getCurrency()`, `getId()`, …). Validation logic and currency-aware formatting are
+kept explicit. Tests use JUnit 5 and AssertJ.
 
 ---
 

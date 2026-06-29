@@ -47,7 +47,7 @@ public final class Transaction {
                                      TransactionType type, List<LedgerEntry> entries) {
         Map<Currency, Long> sumsByCurrency = new HashMap<>();
         for (LedgerEntry entry : entries) {
-            sumsByCurrency.merge(entry.currency(), entry.signedAmount(), Long::sum);
+            sumsByCurrency.merge(entry.getCurrency(), entry.getSignedAmount(), Long::sum);
         }
         for (Map.Entry<Currency, Long> e : sumsByCurrency.entrySet()) {
             if (e.getValue() != 0L) {
@@ -63,7 +63,7 @@ public final class Transaction {
     public List<LedgerEntry> entriesFor(AccountId account) {
         List<LedgerEntry> result = new ArrayList<>();
         for (LedgerEntry entry : entries) {
-            if (entry.account().equals(account)) {
+            if (entry.getAccount().equals(account)) {
                 result.add(entry);
             }
         }

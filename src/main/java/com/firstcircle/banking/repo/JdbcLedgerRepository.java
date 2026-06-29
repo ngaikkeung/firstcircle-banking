@@ -43,24 +43,24 @@ public final class JdbcLedgerRepository implements LedgerRepository {
     @Override
     public void append(Transaction transaction, String requestKey, Connection c) {
         try (PreparedStatement txPs = c.prepareStatement(INSERT_TX)) {
-            txPs.setObject(1, transaction.id().value());
-            txPs.setLong(2, transaction.sequence());
-            txPs.setObject(3, OffsetDateTime.ofInstant(transaction.timestamp(), ZoneOffset.UTC));
-            txPs.setString(4, transaction.type().name());
+            txPs.setObject(1, transaction.getId().getValue());
+            txPs.setLong(2, transaction.getSequence());
+            txPs.setObject(3, OffsetDateTime.ofInstant(transaction.getTimestamp(), ZoneOffset.UTC));
+            txPs.setString(4, transaction.getType().name());
             txPs.setString(5, requestKey);
             txPs.executeUpdate();
         } catch (SQLException e) {
             throw SqlExceptions.wrap(e); // 23505 (duplicate request_key) -> UniqueViolationException
         }
         try (PreparedStatement ePs = c.prepareStatement(INSERT_ENTRY)) {
-            List<LedgerEntry> entries = transaction.entries();
+            List<LedgerEntry> entries = transaction.getEntries();
             for (int i = 0; i < entries.size(); i++) {
                 LedgerEntry entry = entries.get(i);
-                ePs.setObject(1, transaction.id().value());
-                ePs.setObject(2, entry.account().value());
-                ePs.setString(3, entry.currency().getCurrencyCode());
-                ePs.setString(4, entry.type().name());
-                ePs.setLong(5, entry.signedAmount());
+                ePs.setObject(1, transaction.getId().getValue());
+                ePs.setObject(2, entry.getAccount().getValue());
+                ePs.setString(3, entry.getCurrency().getCurrencyCode());
+                ePs.setString(4, entry.getType().name());
+                ePs.setLong(5, entry.getSignedAmount());
                 ePs.setInt(6, i);
                 ePs.addBatch();
             }
@@ -73,7 +73,7 @@ public final class JdbcLedgerRepository implements LedgerRepository {
     @Override
     public Optional<Transaction> findById(TransactionId id, Connection c) {
         try (PreparedStatement ps = c.prepareStatement(JOIN_SELECT + " WHERE t.id = ? ORDER BY e.ordinal")) {
-            ps.setObject(1, id.value());
+            ps.setObject(1, id.getValue());
             List<Transaction> rows = readGrouped(ps.executeQuery());
             return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
         } catch (SQLException e) {
@@ -106,7 +106,7 @@ public final class JdbcLedgerRepository implements LedgerRepository {
         String sql = "SELECT account_id, currency, entry_type, signed_amount FROM ledger_entries "
                 + "WHERE account_id = ? ORDER BY id";
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, id.value());
+            ps.setObject(1, id.getValue());
             List<LedgerEntry> entries = new ArrayList<>();
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

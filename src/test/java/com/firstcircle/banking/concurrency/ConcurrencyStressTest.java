@@ -62,7 +62,7 @@ class ConcurrencyStressTest {
             futures.add(exec.submit(() -> {
                 start.await();
                 try {
-                    bank.withdraw(a.id(), each);
+                    bank.withdraw(a.getId(), each);
                     successes.incrementAndGet();
                 } catch (InsufficientFundsException e) {
                     insufficient.incrementAndGet();
@@ -76,7 +76,7 @@ class ConcurrencyStressTest {
 
         assertThat(successes.get()).isEqualTo(10);
         assertThat(insufficient.get()).isEqualTo(40);
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.zero(HKD));
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.zero(HKD));
         assertLedgerBalanced();
     }
 
@@ -94,7 +94,7 @@ class ConcurrencyStressTest {
         for (int i = 0; i < threads; i++) {
             futures.add(exec.submit(() -> {
                 start.await();
-                bank.deposit(a.id(), each);
+                bank.deposit(a.getId(), each);
                 return null;
             }));
         }
@@ -103,7 +103,7 @@ class ConcurrencyStressTest {
         exec.shutdown();
 
         // HKD 1,000.00 + 100 * HKD 1.00 == HKD 1,100.00 exactly.
-        assertThat(bank.getBalance(a.id())).isEqualTo(Money.ofMinor(1100_00, HKD));
+        assertThat(bank.getBalance(a.getId())).isEqualTo(Money.ofMinor(1100_00, HKD));
         assertLedgerBalanced();
     }
 
@@ -135,7 +135,7 @@ class ConcurrencyStressTest {
                     Account to = accountsList.get(rng.nextInt(n));
                     long amount = rng.nextLong(1, 50_00); // HKD 0.01 .. 49.99
                     try {
-                        bank.transfer(from.id(), to.id(), Money.ofMinor(amount, HKD));
+                        bank.transfer(from.getId(), to.getId(), Money.ofMinor(amount, HKD));
                     } catch (InsufficientFundsException | SameAccountTransferException ignored) {
                         // failures don't move money; conservation still holds
                     }
@@ -149,7 +149,7 @@ class ConcurrencyStressTest {
 
         long finalTotal = 0;
         for (Account acc : accountsList) {
-            finalTotal += bank.getBalance(acc.id()).minor();
+            finalTotal += bank.getBalance(acc.getId()).getMinor();
         }
         assertThat(finalTotal).isEqualTo(initialTotal);
         assertLedgerBalanced();
@@ -178,7 +178,7 @@ class ConcurrencyStressTest {
                     Account to = aToB ? b : a;
                     long amount = rng.nextLong(1, 20_00);
                     try {
-                        bank.transfer(from.id(), to.id(), Money.ofMinor(amount, HKD));
+                        bank.transfer(from.getId(), to.getId(), Money.ofMinor(amount, HKD));
                     } catch (InsufficientFundsException ignored) {
                         // fine
                     }
@@ -190,7 +190,7 @@ class ConcurrencyStressTest {
         waitForAll(futures); // would hang until @Timeout if deadlocked
         exec.shutdown();
 
-        long finalTotal = bank.getBalance(a.id()).minor() + bank.getBalance(b.id()).minor();
+        long finalTotal = bank.getBalance(a.getId()).getMinor() + bank.getBalance(b.getId()).getMinor();
         assertThat(finalTotal).isEqualTo(initialTotal);
         assertLedgerBalanced();
     }
@@ -207,12 +207,12 @@ class ConcurrencyStressTest {
     private void assertLedgerBalanced() {
         for (Transaction tx : bank.ledger()) {
             Map<Currency, Long> sums = new HashMap<>();
-            for (LedgerEntry e : tx.entries()) {
-                sums.merge(e.currency(), e.signedAmount(), Long::sum);
+            for (LedgerEntry e : tx.getEntries()) {
+                sums.merge(e.getCurrency(), e.getSignedAmount(), Long::sum);
             }
             for (Map.Entry<Currency, Long> entry : sums.entrySet()) {
                 assertThat(entry.getValue())
-                        .as("transaction #%s is unbalanced in %s", tx.sequence(), entry.getKey())
+                        .as("transaction #%s is unbalanced in %s", tx.getSequence(), entry.getKey())
                         .isZero();
             }
         }

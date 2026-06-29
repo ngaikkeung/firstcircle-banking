@@ -24,7 +24,7 @@ class TransactionBalanceTest {
                         LedgerEntry.debit(alice, TestFixtures.HKD, amount),
                         LedgerEntry.credit(AccountId.random(), TestFixtures.HKD, amount)));
 
-        assertThat(tx.entries()).hasSize(2);
+        assertThat(tx.getEntries()).hasSize(2);
         assertThat(tx.entriesFor(alice)).hasSize(1);
     }
 
@@ -41,7 +41,7 @@ class TransactionBalanceTest {
                         LedgerEntry.debit(ContraAccountIds.FX_CONTRA, TestFixtures.USD, usdAmount),
                         LedgerEntry.credit(AccountId.random(), TestFixtures.USD, usdAmount)));
 
-        assertThat(tx.entries()).hasSize(4);
+        assertThat(tx.getEntries()).hasSize(4);
     }
 
     @Test

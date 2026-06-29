@@ -26,31 +26,31 @@ class BankingServiceDepositTest {
     @Test
     void depositIncreasesBalanceAndRecordsBalancedTransaction() {
         Account account = newHkdAccount();
-        Money before = bank.getBalance(account.id());
+        Money before = bank.getBalance(account.getId());
 
-        Transaction tx = bank.deposit(account.id(), Money.ofMinor(25_00, TestFixtures.HKD));
+        Transaction tx = bank.deposit(account.getId(), Money.ofMinor(25_00, TestFixtures.HKD));
 
-        assertThat(tx.type()).isEqualTo(TransactionType.DEPOSIT);
-        assertThat(tx.entries()).hasSize(2);
-        assertThat(tx.entries()).anySatisfy(e -> {
-            assertThat(e.account()).isEqualTo(account.id());
-            assertThat(e.type()).isEqualTo(EntryType.CREDIT);
-            assertThat(e.signedAmount()).isEqualTo(2500L);
+        assertThat(tx.getType()).isEqualTo(TransactionType.DEPOSIT);
+        assertThat(tx.getEntries()).hasSize(2);
+        assertThat(tx.getEntries()).anySatisfy(e -> {
+            assertThat(e.getAccount()).isEqualTo(account.getId());
+            assertThat(e.getType()).isEqualTo(EntryType.CREDIT);
+            assertThat(e.getSignedAmount()).isEqualTo(2500L);
         });
-        assertThat(tx.entries()).anySatisfy(e -> {
-            assertThat(e.account()).isEqualTo(ContraAccountIds.CASH_CONTRA);
-            assertThat(e.type()).isEqualTo(EntryType.DEBIT);
+        assertThat(tx.getEntries()).anySatisfy(e -> {
+            assertThat(e.getAccount()).isEqualTo(ContraAccountIds.CASH_CONTRA);
+            assertThat(e.getType()).isEqualTo(EntryType.DEBIT);
         });
-        assertThat(bank.getBalance(account.id())).isEqualTo(before.plus(Money.ofMinor(25_00, TestFixtures.HKD)));
+        assertThat(bank.getBalance(account.getId())).isEqualTo(before.plus(Money.ofMinor(25_00, TestFixtures.HKD)));
     }
 
     @Test
     void rejectsDepositInWrongCurrency() {
         Account account = newHkdAccount();
-        assertThatThrownBy(() -> bank.deposit(account.id(), Money.ofMinor(10_00, TestFixtures.USD)))
+        assertThatThrownBy(() -> bank.deposit(account.getId(), Money.ofMinor(10_00, TestFixtures.USD)))
                 .isInstanceOf(CurrencyMismatchException.class);
         // balance untouched
-        assertThat(bank.getBalance(account.id())).isEqualTo(Money.ofMinor(50_00, TestFixtures.HKD));
+        assertThat(bank.getBalance(account.getId())).isEqualTo(Money.ofMinor(50_00, TestFixtures.HKD));
     }
 
     @Test
@@ -62,7 +62,7 @@ class BankingServiceDepositTest {
     @Test
     void rejectsZeroAndNegativeDeposits() {
         Account account = newHkdAccount();
-        assertThatThrownBy(() -> bank.deposit(account.id(), Money.zero(TestFixtures.HKD)))
+        assertThatThrownBy(() -> bank.deposit(account.getId(), Money.zero(TestFixtures.HKD)))
                 .isInstanceOf(NegativeAmountException.class);
     }
 }

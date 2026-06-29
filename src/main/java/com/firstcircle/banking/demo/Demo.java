@@ -48,85 +48,85 @@ public final class Demo {
         section("1. Account creation");
 
         Account alice = bank.createAccount("Alice", hkd, Money.ofMinor(100_000_00L, hkd));
-        log("Created account '%s' with initial deposit %s", alice.ownerName(), alice.balance());
+        log("Created account '%s' with initial deposit %s", alice.getOwnerName(), alice.balance());
 
         Account bob = bank.createAccount("Bob", hkd, Money.zero(hkd));
-        log("Created account '%s' with zero deposit (balance = %s)", bob.ownerName(), bob.balance());
+        log("Created account '%s' with zero deposit (balance = %s)", bob.getOwnerName(), bob.balance());
 
         // -- 2. Balance enquiry ------------------------------------------------
         section("2. Balance enquiry");
 
-        log("Alice balance: %s", bank.getBalance(alice.id()));
-        log("Bob   balance: %s", bank.getBalance(bob.id()));
+        log("Alice balance: %s", bank.getBalance(alice.getId()));
+        log("Bob   balance: %s", bank.getBalance(bob.getId()));
 
         // -- 3. Deposit --------------------------------------------------------
         section("3. Deposit");
 
-        Transaction dep = bank.deposit(bob.id(), Money.ofMinor(50_000_00L, hkd));
-        log("Deposited HKD 50,000.00 to Bob (tx %s, type %s)", dep.id().value(), dep.type());
-        log("Bob   balance: %s", bank.getBalance(bob.id()));
+        Transaction dep = bank.deposit(bob.getId(), Money.ofMinor(50_000_00L, hkd));
+        log("Deposited HKD 50,000.00 to Bob (tx %s, type %s)", dep.getId().getValue(), dep.getType());
+        log("Bob   balance: %s", bank.getBalance(bob.getId()));
 
         // -- 4. Withdrawal -----------------------------------------------------
         section("4. Withdrawal");
 
-        Transaction wd = bank.withdraw(alice.id(), Money.ofMinor(20_000_00L, hkd));
-        log("Withdrew HKD 20,000.00 from Alice (tx %s, type %s)", wd.id().value(), wd.type());
-        log("Alice balance: %s", bank.getBalance(alice.id()));
+        Transaction wd = bank.withdraw(alice.getId(), Money.ofMinor(20_000_00L, hkd));
+        log("Withdrew HKD 20,000.00 from Alice (tx %s, type %s)", wd.getId().getValue(), wd.getType());
+        log("Alice balance: %s", bank.getBalance(alice.getId()));
 
         // Overdraft is rejected — balance stays unchanged.
         section("4a. Overdraft rejection");
-        Money aliceBefore = bank.getBalance(alice.id());
+        Money aliceBefore = bank.getBalance(alice.getId());
         try {
-            bank.withdraw(alice.id(), Money.ofMinor(999_000_00L, hkd));
+            bank.withdraw(alice.getId(), Money.ofMinor(999_000_00L, hkd));
         } catch (InsufficientFundsException e) {
             log("Overdraft rejected as expected: %s", e.getMessage());
         }
-        Money aliceAfter = bank.getBalance(alice.id());
+        Money aliceAfter = bank.getBalance(alice.getId());
         log("Alice balance unchanged: %s == %s → %s", aliceBefore, aliceAfter, aliceBefore.equals(aliceAfter));
 
         // -- 5. Transfer -------------------------------------------------------
         section("5. Transfer");
 
-        Transaction tx = bank.transfer(alice.id(), bob.id(), Money.ofMinor(30_000_00L, hkd));
-        log("Transferred HKD 30,000.00 from Alice → Bob (tx %s, type %s)", tx.id().value(), tx.type());
-        log("Alice balance: %s", bank.getBalance(alice.id()));
-        log("Bob   balance: %s", bank.getBalance(bob.id()));
+        Transaction tx = bank.transfer(alice.getId(), bob.getId(), Money.ofMinor(30_000_00L, hkd));
+        log("Transferred HKD 30,000.00 from Alice → Bob (tx %s, type %s)", tx.getId().getValue(), tx.getType());
+        log("Alice balance: %s", bank.getBalance(alice.getId()));
+        log("Bob   balance: %s", bank.getBalance(bob.getId()));
 
         // -- 6. Idempotent deposit ---------------------------------------------
         section("6. Idempotent deposit (at-most-once)");
 
         IdempotencyKey key = IdempotencyKey.of("bonus-alice-001");
-        Transaction first = bank.deposit(alice.id(), Money.ofMinor(5_000_00L, hkd), key);
+        Transaction first = bank.deposit(alice.getId(), Money.ofMinor(5_000_00L, hkd), key);
         log("First  deposit (key=bonus-alice-001): tx %s, Alice balance: %s",
-                first.id().value(), bank.getBalance(alice.id()));
+                first.getId().getValue(), bank.getBalance(alice.getId()));
 
-        Transaction replay = bank.deposit(alice.id(), Money.ofMinor(5_000_00L, hkd), key);
+        Transaction replay = bank.deposit(alice.getId(), Money.ofMinor(5_000_00L, hkd), key);
         log("Replay deposit (same key):            tx %s, Alice balance: %s",
-                replay.id().value(), bank.getBalance(alice.id()));
+                replay.getId().getValue(), bank.getBalance(alice.getId()));
 
-        log("Same transaction id? %s  (replay did NOT double-credit)", first.id().equals(replay.id()));
+        log("Same transaction id? %s  (replay did NOT double-credit)", first.getId().equals(replay.getId()));
 
         // -- 7. Idempotent transfer --------------------------------------------
         section("7. Idempotent transfer (at-most-once)");
 
         IdempotencyKey txKey = IdempotencyKey.of("settle-bob-001");
-        Transaction firstTx = bank.transfer(bob.id(), alice.id(), Money.ofMinor(10_000_00L, hkd), txKey);
-        log("First  transfer (key=settle-bob-001): tx %s", firstTx.id().value());
+        Transaction firstTx = bank.transfer(bob.getId(), alice.getId(), Money.ofMinor(10_000_00L, hkd), txKey);
+        log("First  transfer (key=settle-bob-001): tx %s", firstTx.getId().getValue());
 
-        Transaction replayTx = bank.transfer(bob.id(), alice.id(), Money.ofMinor(10_000_00L, hkd), txKey);
-        log("Replay transfer (same key):           tx %s", replayTx.id().value());
-        log("Same transaction id? %s  (replay did NOT double-transfer)", firstTx.id().equals(replayTx.id()));
+        Transaction replayTx = bank.transfer(bob.getId(), alice.getId(), Money.ofMinor(10_000_00L, hkd), txKey);
+        log("Replay transfer (same key):           tx %s", replayTx.getId().getValue());
+        log("Same transaction id? %s  (replay did NOT double-transfer)", firstTx.getId().equals(replayTx.getId()));
 
         // -- Final balances ----------------------------------------------------
         section("Final balances");
-        log("Alice: %s", bank.getBalance(alice.id()));
-        log("Bob:   %s", bank.getBalance(bob.id()));
+        log("Alice: %s", bank.getBalance(alice.getId()));
+        log("Bob:   %s", bank.getBalance(bob.getId()));
 
         // -- Ledger summary ----------------------------------------------------
         section("Ledger (" + bank.ledger().size() + " transactions)");
         for (Transaction t : bank.ledger()) {
             log("  #%d  %-10s  %s  (%d entries)",
-                    t.sequence(), t.type(), t.timestamp(), t.entries().size());
+                    t.getSequence(), t.getType(), t.getTimestamp(), t.getEntries().size());
         }
     }
 

@@ -17,15 +17,15 @@ class BankingServiceCreationTest {
     void createsAccountWithInitialDeposit() {
         Account account = bank.createAccount("Acme", TestFixtures.HKD, Money.ofMinor(100_00, TestFixtures.HKD));
 
-        assertThat(account.ownerName()).isEqualTo("Acme");
-        assertThat(account.currency()).isEqualTo(TestFixtures.HKD);
-        assertThat(bank.getBalance(account.id())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
+        assertThat(account.getOwnerName()).isEqualTo("Acme");
+        assertThat(account.getCurrency()).isEqualTo(TestFixtures.HKD);
+        assertThat(bank.getBalance(account.getId())).isEqualTo(Money.ofMinor(100_00, TestFixtures.HKD));
     }
 
     @Test
     void trimsOwnerName() {
         Account account = bank.createAccount("  Spaced Co  ", TestFixtures.HKD, Money.zero(TestFixtures.HKD));
-        assertThat(account.ownerName()).isEqualTo("Spaced Co");
+        assertThat(account.getOwnerName()).isEqualTo("Spaced Co");
     }
 
     @Test
@@ -37,7 +37,7 @@ class BankingServiceCreationTest {
     @Test
     void zeroInitialDepositIsAllowed() {
         Account account = bank.createAccount("Acme", TestFixtures.HKD, Money.zero(TestFixtures.HKD));
-        assertThat(bank.getBalance(account.id())).isEqualTo(Money.zero(TestFixtures.HKD));
+        assertThat(bank.getBalance(account.getId())).isEqualTo(Money.zero(TestFixtures.HKD));
     }
 
     @Test

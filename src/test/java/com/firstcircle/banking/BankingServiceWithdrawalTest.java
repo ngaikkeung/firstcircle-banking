@@ -23,32 +23,32 @@ class BankingServiceWithdrawalTest {
     @Test
     void withdrawalDecreasesBalance() {
         Account account = fundedHkdAccount();
-        bank.withdraw(account.id(), Money.ofMinor(30_00, TestFixtures.HKD));
-        assertThat(bank.getBalance(account.id())).isEqualTo(Money.ofMinor(70_00, TestFixtures.HKD));
+        bank.withdraw(account.getId(), Money.ofMinor(30_00, TestFixtures.HKD));
+        assertThat(bank.getBalance(account.getId())).isEqualTo(Money.ofMinor(70_00, TestFixtures.HKD));
     }
 
     @Test
     void canWithdrawEntireBalance() {
         Account account = fundedHkdAccount();
-        bank.withdraw(account.id(), Money.ofMinor(100_00, TestFixtures.HKD));
-        assertThat(bank.getBalance(account.id())).isEqualTo(Money.zero(TestFixtures.HKD));
+        bank.withdraw(account.getId(), Money.ofMinor(100_00, TestFixtures.HKD));
+        assertThat(bank.getBalance(account.getId())).isEqualTo(Money.zero(TestFixtures.HKD));
     }
 
     @Test
     void overdraftIsNotAllowedAndBalanceIsUnchanged() {
         Account account = fundedHkdAccount();
-        Money before = bank.getBalance(account.id());
+        Money before = bank.getBalance(account.getId());
 
-        assertThatThrownBy(() -> bank.withdraw(account.id(), Money.ofMinor(100_01, TestFixtures.HKD)))
+        assertThatThrownBy(() -> bank.withdraw(account.getId(), Money.ofMinor(100_01, TestFixtures.HKD)))
                 .isInstanceOf(InsufficientFundsException.class);
 
-        assertThat(bank.getBalance(account.id())).isEqualTo(before);
+        assertThat(bank.getBalance(account.getId())).isEqualTo(before);
     }
 
     @Test
     void rejectsWithdrawalInWrongCurrency() {
         Account account = fundedHkdAccount();
-        assertThatThrownBy(() -> bank.withdraw(account.id(), Money.ofMinor(10_00, TestFixtures.USD)))
+        assertThatThrownBy(() -> bank.withdraw(account.getId(), Money.ofMinor(10_00, TestFixtures.USD)))
                 .isInstanceOf(CurrencyMismatchException.class);
     }
 
@@ -61,7 +61,7 @@ class BankingServiceWithdrawalTest {
     @Test
     void rejectsZeroWithdrawal() {
         Account account = fundedHkdAccount();
-        assertThatThrownBy(() -> bank.withdraw(account.id(), Money.zero(TestFixtures.HKD)))
+        assertThatThrownBy(() -> bank.withdraw(account.getId(), Money.zero(TestFixtures.HKD)))
                 .isInstanceOf(NegativeAmountException.class);
     }
 }
